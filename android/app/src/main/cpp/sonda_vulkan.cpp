@@ -14,6 +14,8 @@
 //   - con el motor nativo: sirve su renderizador en esta GPU, y que adapta
 //     (BC en CPU, sin enteros de 64 bits, Vulkan 1.1, Mali)?
 
+#include <android/api-level.h>
+
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -284,6 +286,9 @@ int NfsmwSondaVulkan(int argc, char** argv) {
 
   Informe inf;
   inf.Linea("NFSMW Recompiled - sonda de Vulkan");
+  // PanVK (Mesa para Mali) puede depender de la version de Android (libdrm, gralloc): se anota para
+  // comparar informes. Android 16 = API 36.
+  inf.Linea(fmt::format("Android: API {}", android_get_device_api_level()));
   const std::string& driver = REXCVAR_GET(android_gpu_driver_name);
   inf.Linea(driver.empty() ? "Driver pedido: el del sistema"
                            : fmt::format("Driver pedido: {} (en {})", driver,

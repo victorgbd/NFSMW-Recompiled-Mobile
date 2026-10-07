@@ -424,6 +424,9 @@ como driver propio y no sirve, por ahora: en Android 13 necesita una libdrm más
 del sistema (cargada con otro nombre), no puede crear la cadena de presentación con el gralloc
 de Samsung (`VK_ERROR_INVALID_EXTERNAL_HANDLE`: pantalla negra), sus BC salen negras, y aun con
 las BC en la CPU la mayoría de superficies salen negras. El retrovisor, en cambio, sí se ve.
+Hipótesis sin comprobar: PanVK podría funcionar solo en Android 16 o posterior (API 36), donde
+los fallos de libdrm y del gralloc podrían no darse. La sonda anota ahora la versión de Android
+en su informe para compararlo.
 
 ## Qué falta
 
