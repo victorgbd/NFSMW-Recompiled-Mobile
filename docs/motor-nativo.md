@@ -407,11 +407,52 @@ el RedMagic con los mismos caminos forzados (`nfsmw_nativo_texturas_bc_cpu`,
 `nfsmw_nativo_simular_vulkan11`, `nfsmw_nativo_cuatro_conjuntos`,
 `nfsmw_consultas_oclusion=off`, a 1280x720) se ve bien.
 
+**Mali nuevos (Valhall tardíos y 5.ª generación: G710, G715/Immortalis-G715, G720, G725, G925).**
+No hay ninguno entre los móviles de prueba, así que nada de lo de arriba está comprobado en ellos.
+Lo que sí hace el código para no depender de adivinar: los caminos de compatibilidad (BC en la CPU,
+4 conjuntos de descriptores, SPIR-V 1.3) se activan por lo que **dice el driver**
+(`optimalTilingFeatures`, `maxBoundDescriptorSets`, versión de Vulkan), no por el nombre de la GPU,
+así que un Mali nuevo que sí tenga 5 conjuntos o Vulkan 1.3 usa el camino normal. La única decisión
+por marca es la de las consultas de oclusión, que se desactivan en todo Mali (vendor `0x13B5`) y
+pierden el destello del sol; en los nuevos puede que no haga falta. La sonda (pantalla de inicio)
+detecta el Mali por vendor, driver o nombre, y escribe en su informe la generación, la versión del
+driver y `maxBoundDescriptorSets`. **Para validar un Mali nuevo**: pasar la sonda, mirar que diga
+"MOTOR NATIVO: sirve" y copiar ese informe al informar de un problema.
+
 **PanVK** (Mesa para Mali sobre kbase, la compilación de FristOneRR para el Mali-G57) se probó
 como driver propio y no sirve, por ahora: en Android 13 necesita una libdrm más nueva que la
 del sistema (cargada con otro nombre), no puede crear la cadena de presentación con el gralloc
 de Samsung (`VK_ERROR_INVALID_EXTERNAL_HANDLE`: pantalla negra), sus BC salen negras, y aun con
 las BC en la CPU la mayoría de superficies salen negras. El retrovisor, en cambio, sí se ve.
+Hipótesis sin comprobar: PanVK podría funcionar solo en Android 16 o posterior (API 36), donde
+los fallos de libdrm y del gralloc podrían no darse. La sonda anota ahora la versión de Android
+en su informe para compararlo.
+
+## Widescreen (pantallas más anchas que 16:9): en investigación
+
+Objetivo: llenar un móvil de 20:9 sin barras ni deformar, como el WidescreenFixesPack de PC.
+**No hay fix todavía**: faltan las direcciones del juego, y sin el XEX no se pueden sacar a ciegas.
+
+Lo que ya se sabe del código del motor nativo:
+
+- El juego pinta a 1280×720 en todo (destinos de render, resolves, la salida `1280, 720` de
+  `nfsmw_nativo_destinos.cpp`). `nfsmw_resolucion_interna` solo escala esos 16:9.
+- Cada vista (`eView`, tabla `0x82A38070`, 112 bytes) tiene `H` (+0x0C), cerca, lejos, `FovBias`
+  (+0x18) y `FovDegrees` (+0x1C). `sub_8243EC28` (eView::Update) las recalcula en cada fotograma, y es
+  donde el motor ya engancha el detalle mínimo de la escena: el sitio natural para ensanchar el campo
+  de visión sin tocar el binario.
+- La proporción en sí no está en ninguno de esos campos: hay que encontrar dónde la lee la matriz de
+  proyección.
+
+Pasos: (1) localizar la proporción y la proyección, (2) cvar `nfsmw_proporcion` que ensancha el FOV
+horizontal (Hor+) y la superficie de render, (3) HUD y menús anclados a los bordes, (4) posproceso,
+culling y sombras en los laterales. Los vídeos se quedan en 16:9 con barras.
+
+Para el paso 1 está `tools/diagnostico/parche_aspecto.py`: añade al motor nativo los cvars
+`nfsmw_diag_aspecto` (barre la memoria del juego buscando 16:9, 4:3, 1280.0 y 720.0, y apunta los
+campos de la vista de la escena) y `nfsmw_diag_poke` (escribe floats en direcciones del guest cada
+fotograma, para probar candidatos sin recompilar). Hay que correrlo en el móvil con el juego y mandar el
+log (`[aspecto]`). Compila con stubs; no se ha probado dentro del juego.
 
 ## Qué falta
 
