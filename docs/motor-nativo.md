@@ -428,6 +428,32 @@ Hipótesis sin comprobar: PanVK podría funcionar solo en Android 16 o posterior
 los fallos de libdrm y del gralloc podrían no darse. La sonda anota ahora la versión de Android
 en su informe para compararlo.
 
+## Widescreen (pantallas más anchas que 16:9): en investigación
+
+Objetivo: llenar un móvil de 20:9 sin barras ni deformar, como el WidescreenFixesPack de PC.
+**No hay fix todavía**: faltan las direcciones del juego, y sin el XEX no se pueden sacar a ciegas.
+
+Lo que ya se sabe del código del motor nativo:
+
+- El juego pinta a 1280×720 en todo (destinos de render, resolves, la salida `1280, 720` de
+  `nfsmw_nativo_destinos.cpp`). `nfsmw_resolucion_interna` solo escala esos 16:9.
+- Cada vista (`eView`, tabla `0x82A38070`, 112 bytes) tiene `H` (+0x0C), cerca, lejos, `FovBias`
+  (+0x18) y `FovDegrees` (+0x1C). `sub_8243EC28` (eView::Update) las recalcula en cada fotograma, y es
+  donde el motor ya engancha el detalle mínimo de la escena: el sitio natural para ensanchar el campo
+  de visión sin tocar el binario.
+- La proporción en sí no está en ninguno de esos campos: hay que encontrar dónde la lee la matriz de
+  proyección.
+
+Pasos: (1) localizar la proporción y la proyección, (2) cvar `nfsmw_proporcion` que ensancha el FOV
+horizontal (Hor+) y la superficie de render, (3) HUD y menús anclados a los bordes, (4) posproceso,
+culling y sombras en los laterales. Los vídeos se quedan en 16:9 con barras.
+
+Para el paso 1 está `tools/diagnostico/parche_aspecto.py`: añade al motor nativo los cvars
+`nfsmw_diag_aspecto` (barre la memoria del juego buscando 16:9, 4:3, 1280.0 y 720.0, y apunta los
+campos de la vista de la escena) y `nfsmw_diag_poke` (escribe floats en direcciones del guest cada
+fotograma, para probar candidatos sin recompilar). Hay que correrlo en el móvil con el juego y mandar el
+log (`[aspecto]`). Compila con stubs; no se ha probado dentro del juego.
+
 ## Qué falta
 
 - **Probar lo portado**: Turnip, el turbo, la sonda, la afinidad, el audio por AAudio
