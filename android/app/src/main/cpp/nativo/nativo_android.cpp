@@ -763,6 +763,14 @@ Lectura g_cache;
 
 bool InstruccionesBien(rex::memory::Memory* memoria, const uint32_t* direcciones) {
   if (g_instrucciones_bien < 0) {
+    // Si la app pregunta antes de que el ejecutable este en memoria, ahi hay
+    // ceros: no se decide nada y se vuelve a mirar en la siguiente pregunta.
+    for (const auto& i : kInstrucciones) {
+      uint32_t palabra = 0;
+      if (!Leer32(memoria, direcciones[i.funcion] + i.desplazamiento, &palabra) || palabra == 0) {
+        return false;
+      }
+    }
     g_instrucciones_bien = 1;
     for (const auto& i : kInstrucciones) {
       uint32_t palabra = 0;
@@ -789,10 +797,16 @@ bool InstruccionesBien(rex::memory::Memory* memoria, const uint32_t* direcciones
         g_instrucciones_bien = 0;
       }
     }
-    // Y la tabla de nombres tiene "drag" con su tipo.
+    // Y la tabla de nombres tiene "drag" con su tipo. La rellena el juego al
+    // arrancar: mientras no este, se vuelve a mirar en la siguiente pregunta.
     if (g_instrucciones_bien && TipoPorNombre(memoria, direcciones, "drag") != kTipoAceleracion) {
-      REXLOG_WARN("[contexto] la tabla de tipos de carrera no tiene \"drag\": sin controles por contexto");
-      g_instrucciones_bien = 0;
+      static bool avisado = false;
+      if (!avisado) {
+        avisado = true;
+        REXLOG_INFO("[contexto] la tabla de tipos de carrera aun no tiene \"drag\": se vuelve a mirar");
+      }
+      g_instrucciones_bien = -1;
+      return false;
     }
   }
   return g_instrucciones_bien == 1;

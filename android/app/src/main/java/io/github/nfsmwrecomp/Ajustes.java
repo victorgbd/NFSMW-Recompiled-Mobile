@@ -476,7 +476,8 @@ final class Ajustes {
         // SDK lo aplica en cada arranque y es un ajuste de TODO el movil que
         // persiste, asi que false es lo que devuelve la GPU a su gobernador si
         // una partida anterior con Turnip lo dejo puesto.
-        a.add("--android_gpu_turbo=" + (d != null && turbo()));
+        // Y solo con Turnip: otro driver propio (PanVK en un Mali) no tiene KGSL.
+        a.add("--android_gpu_turbo=" + (d != null && d.esTurnip() && turbo()));
 
         if (sonda) {
             a.add("--nfsmw_sonda");

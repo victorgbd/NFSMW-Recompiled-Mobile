@@ -11,7 +11,10 @@
 //   - se carga Turnip de verdad, o se queda el driver de Qualcomm?
 //   - el SDK acepta este movil para emular la GPU?
 //   - hay texturas BC (las del juego) o habra que descomprimirlas en CPU?
+//   - con el motor nativo: sirve su renderizador en esta GPU, y que adapta
+//     (BC en CPU, sin enteros de 64 bits, Vulkan 1.1, Mali)?
 
+#include <cstring>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -102,32 +105,108 @@ void SondearDispositivo(Informe& inf, const VulkanInstance& instancia, VkPhysica
     inf.Linea("Driver: sin VkPhysicalDeviceDriverProperties (Vulkan < 1.2)");
   }
 
-  // Texturas BC: las usa el juego. Sin ellas el SDK las descomprime en CPU.
+  // Texturas BC: las usa el juego. Sin ellas se descomprimen en CPU. Lo que
+  // pide el motor nativo para usarlas tal cual (nfsmw_nativo_dibujos.cpp).
   const std::pair<VkFormat, const char*> formatos[] = {
       {VK_FORMAT_BC1_RGBA_UNORM_BLOCK, "BC1"},
       {VK_FORMAT_BC2_UNORM_BLOCK, "BC2"},
       {VK_FORMAT_BC3_UNORM_BLOCK, "BC3"},
+      {VK_FORMAT_BC4_UNORM_BLOCK, "BC4"},
       {VK_FORMAT_BC5_UNORM_BLOCK, "BC5"},
   };
+  constexpr VkFormatFeatureFlags kBcRequerido = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                                VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+                                                VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
   std::string bc;
+  std::string bc_en_cpu;
+  // Las Xclipse de Samsung dicen tener BC4 y BC5, pero su driver las convierte el mismo por un camino a
+  // medias: el motor nativo las pasa por la CPU (parche_nativo.py, seccion 10).
+  const bool xclipse = std::strstr(props.deviceName, "Xclipse") != nullptr;
   for (const auto& [formato, nombre] : formatos) {
     VkFormatProperties fp{};
     ifn.vkGetPhysicalDeviceFormatProperties(fisico, formato, &fp);
-    const bool ok = (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
+    const bool ok = (fp.optimalTilingFeatures & kBcRequerido) == kBcRequerido;
     bc += fmt::format("{}={} ", nombre, ok ? "si" : "NO");
+    const bool en_cpu = !ok || (xclipse && (formato == VK_FORMAT_BC4_UNORM_BLOCK ||
+                                            formato == VK_FORMAT_BC5_UNORM_BLOCK));
+    if (en_cpu) {
+      bc_en_cpu += bc_en_cpu.empty() ? nombre : fmt::format(" {}", nombre);
+    }
   }
   inf.Linea("Texturas comprimidas: " + bc);
+  VkPhysicalDeviceFeatures rasgos_base{};
+  ifn.vkGetPhysicalDeviceFeatures(fisico, &rasgos_base);
+  inf.Linea(fmt::format("Enteros de 64 bits en shaders (shaderInt64): {}",
+                        rasgos_base.shaderInt64 ? "si" : "NO"));
+
+#if NFSMW_MOTOR_NATIVO
+  // El dispositivo como lo crea el motor nativo en Android
+  // (nfsmw_nativo_sistema.cpp): sin emulacion de la Xenos y con lo que piden
+  // sus shaders. Lo que exige su renderizador al empezar
+  // (nfsmw_nativo_dibujos.cpp, Inicializar), y lo que adapta si falta.
+  rex::cvar::SetFlagByName("vulkan_native_shader_features", "true");
+  if (auto nativo = VulkanDevice::CreateIfSupported(&instancia, fisico,
+                                                    /*with_gpu_emulation=*/false,
+                                                    /*with_swapchain=*/true)) {
+    const auto& p = nativo->properties();
+    const std::pair<bool, const char*> requisitos[] = {
+        {p.independentBlend, "independentBlend"},
+        {p.runtimeDescriptorArray, "runtimeDescriptorArray"},
+        {p.shaderSampledImageArrayDynamicIndexing, "shaderSampledImageArrayDynamicIndexing"},
+        {p.descriptorBindingPartiallyBound, "descriptorBindingPartiallyBound"},
+        {p.descriptorBindingSampledImageUpdateAfterBind,
+         "descriptorBindingSampledImageUpdateAfterBind"},
+        {p.descriptorBindingUpdateUnusedWhilePending, "descriptorBindingUpdateUnusedWhilePending"},
+    };
+    std::string faltan;
+    for (const auto& [ok, nombre] : requisitos) {
+      if (!ok) {
+        faltan += faltan.empty() ? nombre : fmt::format(", {}", nombre);
+      }
+    }
+    if (!faltan.empty()) {
+      inf.Linea("MOTOR NATIVO: NO sirve, falta " + faltan);
+    } else {
+      inf.Linea("MOTOR NATIVO: sirve");
+      inf.Linea(bc_en_cpu.empty()
+                    ? "  - texturas BC: las de la GPU"
+                    : "  - texturas " + bc_en_cpu +
+                          ": se descomprimen en la CPU (mas memoria y mas carga al entrar en una zona)");
+      inf.Linea(p.shaderInt64 && p.bufferDeviceAddress
+                    ? "  - constantes de los shaders: por UBO (tiene enteros de 64 bits, no hacen falta)"
+                    : "  - sin enteros de 64 bits: no hacen falta, las constantes van por UBO");
+      if (props.apiVersion < VK_MAKE_API_VERSION(0, 1, 2, 0)) {
+        inf.Linea("  - Vulkan 1.1: los shaders se pasan de SPIR-V 1.5 a 1.3 al crearlos");
+      }
+      if (props.vendorID == 0x13B5) {
+        inf.Linea("  - Mali: sin consultas de oclusion (sin el destello del sol), por los cuelgues "
+                  "de su driver");
+      }
+    }
+  } else {
+    inf.Linea("MOTOR NATIVO: NO sirve, el SDK no crea el dispositivo (motivo en el log)");
+  }
+#endif
 
   // Crear el dispositivo como lo crea el juego: con emulacion de GPU. Si el SDK
-  // lo rechaza, el motivo queda en el log.
+  // lo rechaza, el motivo queda en el log. Con el motor nativo es su modo de
+  // compatibilidad.
   auto dispositivo = VulkanDevice::CreateIfSupported(&instancia, fisico,
                                                      /*with_gpu_emulation=*/true,
                                                      /*with_swapchain=*/true);
+#if NFSMW_MOTOR_NATIVO
+  if (!dispositivo) {
+    inf.Linea("MODO DE COMPATIBILIDAD (emular la Xenos): NO sirve (motivo en el log)");
+    return;
+  }
+  inf.Linea("MODO DE COMPATIBILIDAD (emular la Xenos): sirve");
+#else
   if (!dispositivo) {
     inf.Linea("RESULTADO: el SDK NO acepta esta GPU para emular la Xenos (motivo en el log)");
     return;
   }
   inf.Linea("RESULTADO: el SDK acepta esta GPU para emular la Xenos");
+#endif
 
   const auto& p = dispositivo->properties();
   const std::pair<bool, const char*> rasgos[] = {

@@ -399,7 +399,7 @@ public class SetupActivity extends AppCompatActivity {
             seccion(R.string.seccion_rendimiento),
             interruptor(R.string.fijar_hilos, R.string.fijar_hilos_resumen, ajustes.fijarHilos(), ajustes::fijarHilos),
             titulo(R.string.driver),
-            resumen(R.string.ayuda_driver),
+            ayudaDriver(),
             grupoDrivers,
             filaDriver,
             filaTurbo
@@ -613,6 +613,19 @@ public class SetupActivity extends AppCompatActivity {
         lp.topMargin = dp(8);
         caja.addView(raya, lp);
         return caja;
+    }
+
+    /** Turnip es solo para Adreno: con otra GPU, la ayuda lo dice. */
+    private TextView ayudaDriver() {
+        TextView t = resumen(0);
+        if (Gpu.familia(this) == Gpu.Familia.ADRENO) {
+            t.setText(R.string.ayuda_driver);
+        } else {
+            String gpu = Gpu.nombre(this);
+            t.setText(getString(R.string.ayuda_driver_otra,
+                    gpu.isEmpty() ? getString(R.string.gpu_desconocida) : gpu));
+        }
+        return t;
     }
 
     private TextView titulo(int texto) {
@@ -905,7 +918,9 @@ public class SetupActivity extends AppCompatActivity {
         grupoDrivers.removeAllViews();
         MaterialRadioButton sistema = new MaterialRadioButton(this);
         sistema.setId(View.generateViewId());
-        sistema.setText(R.string.driver_sistema);
+        String gpu = Gpu.nombre(this);
+        sistema.setText(gpu.isEmpty() ? getString(R.string.driver_sistema_sin_gpu)
+                : getString(R.string.driver_sistema, gpu));
         sistema.setTextColor(Color.WHITE);
         sistema.setButtonTintList(new ColorStateList(
             new int[][] {{android.R.attr.state_checked}, {}},
@@ -954,7 +969,9 @@ public class SetupActivity extends AppCompatActivity {
     }
 
     private void actualizarTurbo() {
-        boolean propio = Drivers.buscar(this, ajustes.driver()) != null;
+        // Solo con Turnip: es un ajuste de KGSL, la GPU de Adreno.
+        Drivers.Driver d = Drivers.buscar(this, ajustes.driver());
+        boolean propio = d != null && d.esTurnip();
         MaterialSwitch s = (MaterialSwitch) ((LinearLayout) filaTurbo).getChildAt(0);
         s.setOnCheckedChangeListener(null);
         s.setChecked(propio && ajustes.turbo());

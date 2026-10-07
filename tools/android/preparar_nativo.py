@@ -96,7 +96,7 @@ import sys
 
 RAIZ = pathlib.Path(__file__).resolve().parents[2]
 REPO = "https://github.com/codepdbh/nfsmw-android.git"
-COMMIT = "5f581c6"   # android: add experimental GPU compatibility and tester reports for v0.3.5
+COMMIT = "6df1501"   # android: native renderer on Vulkan 1.1 and without shaderInt64
 # Resumen de "git ls-tree HEAD thirdparty/" (solo los submodulos, ordenados) del
 # ReXGlue v0.10.0 en que se basa ese arbol.
 SUBMODULOS = "13082df16a807b8e5d162b79c461b0f454a9bc47679928b281635cbb4941dbd9"

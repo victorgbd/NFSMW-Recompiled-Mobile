@@ -10,6 +10,41 @@ proyecto vibe-codeado: ver la sección "This fork" del [README](README.md).
 
 ### Añadido
 
+- Motor nativo en GPU que no son Adreno (0.4.0). El árbol de nfsmw-android pasa al commit
+  `6df1501`, que trae lo que hace falta para los Mali, PowerVR y Adreno con drivers
+  antiguos, y que solo se activa si a la GPU le falta algo: las texturas BC1-5 se convierten
+  en la CPU (a RGBA8, R8 y RG8) en las GPU sin BC; la biblioteca de shaders de Android ya no
+  usa enteros de 64 bits ni direcciones de buffer (las constantes van siempre por UBO), así
+  que `shaderInt64` deja de hacer falta; en Vulkan 1.1 el SPIR-V 1.5 se pasa a 1.3 al crear
+  cada shader y el SDK activa los índices de descriptores por extensión; el renderizador
+  nativo ya no exige lo de la emulación de la Xenos (`vertexPipelineStoresAndAtomics`); y en
+  Mali no se usan las consultas de oclusión, que colgaban su driver. La biblioteca de
+  shaders de la PAL sale igual que la que esperan ellos (`b84602ca…`). Probado en un Samsung
+  A22 5G (Mali-G57 MC2, Vulkan 1.1, sin BC ni `shaderInt64`): menús a 40-60 fps y carreras a
+  20-22 fps a 1024x576, limitado por la GPU. Fallos que quedan solo en Mali (con los mismos
+  caminos forzados en el RedMagic se ve bien, así que son de su driver): el retrovisor sale
+  negro, una franja negra tapa el horizonte en la pista del bosque y el vídeo de demostración
+  del menú sale duplicado.
+- GPU con solo 4 conjuntos de descriptores (`maxBoundDescriptorSets`), como los Mali
+  Valhall: los shaders del motor nativo usan 5 y el driver de Mali se caía dentro de
+  `vkCreatePipelineLayout`. Con menos de 5, el montón de cubos va en el conjunto del 3D
+  (enlace 1), samplers y UBO bajan uno, y las decoraciones de cada shader se cambian igual
+  al crearlo (`parche_nativo.py`, sección 8). `nfsmw_nativo_cuatro_conjuntos` lo fuerza en
+  cualquier GPU, para probar.
+- Xclipse de Samsung: BC4 y BC5 se convierten en la CPU, porque su driver solo tiene
+  completas BC1-3 y las demás las convierte él mismo, a medias y con tirones (según el
+  análisis de XclipseDecomp; ExynosTools y Eden las esquivan). Sin probar en un móvil con
+  Xclipse.
+- La sonda de Vulkan, con el motor nativo, dice si su renderizador sirve en la GPU y qué
+  adapta (BC en CPU, sin enteros de 64 bits, Vulkan 1.1, Mali) y, aparte, si sirve su modo
+  de compatibilidad.
+- La pantalla de inicio sabe qué GPU tiene el móvil (OpenGL ES, `GL_RENDERER`, una vez por
+  versión del sistema): "Driver del sistema (Mali-G57 MC2)", la ayuda de Turnip solo en
+  Adreno y, en otra GPU, que se usa el del sistema. El turbo de GPU solo se puede activar
+  con Turnip (es de KGSL), y solo con él se pasa al juego.
+- Para probar en un móvil: `gradlew assembleRelease -Pnfsmw.registro=true` deja el log del
+  juego también en release, y `-Pnfsmw.depurable=true` hace el APK depurable (`adb shell
+  run-as`, para sacar capturas y caches) sin cambiar el código nativo.
 - Motor nativo en Android (ver [docs/motor-nativo.md](docs/motor-nativo.md)): el APK se puede
   compilar con el renderizador nativo de
   [nfsmw-android](https://github.com/codepdbh/nfsmw-android), el port a Android de
@@ -347,6 +382,17 @@ proyecto vibe-codeado: ver la sección "This fork" del [README](README.md).
 
 ### Arreglado
 
+- El juego se cerraba al empezar una carrera en móviles lentos (Samsung A22: 3 de 3
+  carreras) con "Call to invalid or unregistered function at guest address 0x00000000".
+  Los dos hilos del juego se pasan órdenes por una lista (0x82909650): uno las añade
+  (`sub_823C8378`) y el otro las va ejecutando a la vez (`sub_823C83F8`), sin barreras. En
+  ARM el que ejecuta podía ver el contador nuevo antes que la orden y llamar a una función
+  0. Ahora la orden se escribe igual pero con una barrera de liberación antes de publicar el
+  final y el contador, y el ejecutor solo hace las ya publicadas (`parche_nativo.py`,
+  sección 9). Con el arreglo, dos carreras seguidas sin cierre.
+- Controles táctiles según la parte del juego con el motor nativo nuevo: la app preguntaba
+  antes de que el ejecutable y la tabla de tipos de carrera estuvieran en memoria, leía
+  ceros y daba la detección por imposible para siempre. Mientras no estén, vuelve a mirar.
 - AAudio: con `audio_maxqframes=64` el juego podía tener 64 bloques en vuelo, pero el
   anillo solo cabía 32. Iba siempre lleno, tirando el audio más viejo en cada bloque.
   Ahora cabe `kMaximumQueuedFrames` (64) entero, así que no desborda con ningún valor.

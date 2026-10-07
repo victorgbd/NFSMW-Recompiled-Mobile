@@ -120,6 +120,46 @@ Su SDK le dice al juego que el mando tactil no tiene motores (caps.vibration a
 por SDL. Aqui el tactil dice que tiene los dos motores y le pasa lo que pide el
 juego a la app (NfsmwAndroidVibrar, nativo_android.cpp), que hace vibrar el
 movil. Sin la app, como antes.
+
+
+8. GPU CON SOLO 4 CONJUNTOS DE DESCRIPTORES
+===========================================
+
+Sus shaders usan 5 conjuntos de descriptores: los montones de texturas 2D (0),
+3D (1) y cubos (2), el de samplers (3) y los UBO de constantes (4). Vulkan solo
+garantiza 4 (maxBoundDescriptorSets), y es lo que dan los Mali Valhall (G57,
+G68...): su driver se cae dentro de vkCreatePipelineLayout con 5. Con menos de
+5, el monton de cubos va en el conjunto del 3D (enlace 1), los samplers en el 2
+y los UBO en el 3, y CrearModulo cambia igual las decoraciones de cada shader
+(JuntarConjuntos). Con 5 o mas, todo como estaba.
+
+
+9. LA COLA DE ORDENES ENTRE LOS DOS HILOS DEL JUEGO, CON BARRERAS
+================================================================
+
+El hilo que prepara cada fotograma anade ordenes a una lista (0x82909650) con
+sub_823C8378: copia sus datos, escribe en la entrada la funcion y el tamano,
+mueve el final y sube el contador. Sin barreras. El "Main XThread" las va
+ejecutando a la vez (sub_823C83F8): lee el contador y llama a la funcion de
+cada entrada. En ARM otro nucleo puede ver el contador nuevo antes que la
+entrada: lee una funcion 0 y el juego se cierra ("Call to invalid or
+unregistered function at guest address 0x00000000"). En el Samsung A22
+(Dimensity 700) pasaba casi siempre al empezar una carrera. Aqui sub_823C8378
+escribe lo mismo, pero con una barrera de liberacion antes de publicar el
+final y el contador, y el ejecutor solo hace las ordenes ya publicadas (el
+contador leido con adquisicion).
+
+
+10. BC4 Y BC5 EN LA CPU EN LAS XCLIPSE
+=====================================
+
+Las Xclipse de Samsung (Exynos 2200 en adelante, AMD RDNA) dicen tener todas las
+BC, pero en su driver solo BC1-3 estan completas: BC4-7 las convierte el propio
+driver en cada subida (tirones) por un camino a medias (analisis de
+XclipseDecomp; ExynosTools y el emulador Eden las esquivan). El juego usa BC4
+(DXT5A) y BC5 (DXN, mapas de normales): en una Xclipse van por la conversion en
+CPU del renderizador, la misma que en las GPU sin BC. Sin probar en un movil
+con Xclipse.
 """
 
 import argparse
@@ -375,6 +415,344 @@ VIBRAR_CAPS_NUEVO = '''#if REX_PLATFORM_ANDROID
   assert(state.sdl);
 '''
 
+CONJ_MIEMBROS_ANCLA = '''  std::array<VkDescriptorSetLayout, 4> layouts_{};
+  VkDescriptorPool pool_ = VK_NULL_HANDLE;
+  std::array<VkDescriptorSet, 4> sets_{};
+'''
+
+CONJ_MIEMBROS_NUEVO = '''  std::array<VkDescriptorSetLayout, 4> layouts_{};
+  VkDescriptorPool pool_ = VK_NULL_HANDLE;
+  std::array<VkDescriptorSet, 4> sets_{};
+  // PARCHE LOCAL (NFSMW Recompiled): GPU con solo 4 conjuntos de descriptores (CrearDescriptores). Lo que se
+  // enlaza de los montones (el de cubos va dentro del 1), cuantos son y en que conjunto van los UBO.
+  bool cuatro_conjuntos_ = false;
+  std::array<VkDescriptorSet, 4> sets_enlace_{};
+  uint32_t n_sets_enlace_ = 4;
+  uint32_t conjunto_ubo_ = 4;
+'''
+
+CONJ_CREAR_ANCLA = '''    for (uint32_t i = 0; i < 4; ++i) {
+      VkDescriptorSetLayoutBinding enlace{};
+      enlace.binding = 0;
+      enlace.descriptorType = kTipos[i];
+      enlace.descriptorCount = kCapacidadMonton[i];
+      enlace.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+      VkDescriptorSetLayoutBindingFlagsCreateInfo banderas{};
+      banderas.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+      banderas.bindingCount = 1;
+      banderas.pBindingFlags = &banderas_enlace;
+      VkDescriptorSetLayoutCreateInfo info{};
+      info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+      info.pNext = &banderas;
+      info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+      info.bindingCount = 1;
+      info.pBindings = &enlace;
+      if (dfn_.vkCreateDescriptorSetLayout(device_, &info, nullptr, &layouts_[i]) != VK_SUCCESS) {
+        return false;
+      }
+      montones_[i].capacidad = kCapacidadMonton[i];
+    }
+'''
+
+CONJ_CREAR_NUEVO = '''    // PARCHE LOCAL (NFSMW Recompiled): los shaders usan 5 conjuntos de descriptores (los montones 2D, 3D,
+    // cubos y samplers, y los UBO en el 4) y Vulkan solo garantiza 4 (maxBoundDescriptorSets). Los Mali
+    // Valhall dan 4, y su driver se cae dentro de vkCreatePipelineLayout con 5. Con 4, el monton de cubos va
+    // en el conjunto del 3D (enlace 1), los samplers en el 2 y los UBO en el 3; CrearModulo cambia los
+    // shaders igual (JuntarConjuntos).
+    {
+      VkPhysicalDeviceProperties fisicas{};
+      dispositivo_->vulkan_instance()->functions().vkGetPhysicalDeviceProperties(dispositivo_->physical_device(),
+                                                                                 &fisicas);
+      cuatro_conjuntos_ = fisicas.limits.maxBoundDescriptorSets < 5 || REXCVAR_GET(nfsmw_nativo_cuatro_conjuntos);
+      if (cuatro_conjuntos_) {
+        REXLOG_INFO("[compatibilidad] {} conjuntos de descriptores{}: el monton de cubos va en el conjunto del "
+                    "3D y samplers y UBO bajan uno", fisicas.limits.maxBoundDescriptorSets,
+                    fisicas.limits.maxBoundDescriptorSets < 5 ? "" : " (forzado: nfsmw_nativo_cuatro_conjuntos)");
+      }
+    }
+    for (uint32_t i = 0; i < 4; ++i) {
+      montones_[i].capacidad = kCapacidadMonton[i];
+      if (cuatro_conjuntos_ && i == 2) {
+        continue;  // el de cubos va en el conjunto 1
+      }
+      const bool con_cubo = cuatro_conjuntos_ && i == 1;
+      VkDescriptorSetLayoutBinding enlaces[2]{};
+      enlaces[0].binding = 0;
+      enlaces[0].descriptorType = kTipos[i];
+      enlaces[0].descriptorCount = kCapacidadMonton[i];
+      enlaces[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+      enlaces[1] = enlaces[0];
+      enlaces[1].binding = 1;
+      enlaces[1].descriptorType = kTipos[2];
+      enlaces[1].descriptorCount = kCapacidadMonton[2];
+      const VkDescriptorBindingFlags banderas_enlaces[2] = {banderas_enlace, banderas_enlace};
+      VkDescriptorSetLayoutBindingFlagsCreateInfo banderas{};
+      banderas.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+      banderas.bindingCount = con_cubo ? 2 : 1;
+      banderas.pBindingFlags = banderas_enlaces;
+      VkDescriptorSetLayoutCreateInfo info{};
+      info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+      info.pNext = &banderas;
+      info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+      info.bindingCount = con_cubo ? 2 : 1;
+      info.pBindings = enlaces;
+      if (dfn_.vkCreateDescriptorSetLayout(device_, &info, nullptr, &layouts_[i]) != VK_SUCCESS) {
+        return false;
+      }
+    }
+'''
+
+CONJ_RESERVA_ANCLA = '''    VkDescriptorSetAllocateInfo reserva{};
+    reserva.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    reserva.descriptorPool = pool_;
+    reserva.descriptorSetCount = 4;
+    reserva.pSetLayouts = layouts_.data();
+    if (dfn_.vkAllocateDescriptorSets(device_, &reserva, sets_.data()) != VK_SUCCESS) {
+      return false;
+    }
+'''
+
+CONJ_RESERVA_NUEVO = '''    // PARCHE LOCAL (NFSMW Recompiled): con 4 conjuntos son 3 de montones, y sets_[2] (cubos) es el mismo
+    // que sets_[1].
+    std::array<VkDescriptorSetLayout, 4> layouts_reserva{};
+    std::array<VkDescriptorSet, 4> reservados{};
+    uint32_t n_reserva = 0;
+    for (VkDescriptorSetLayout l : layouts_) {
+      if (l != VK_NULL_HANDLE) {
+        layouts_reserva[n_reserva++] = l;
+      }
+    }
+    VkDescriptorSetAllocateInfo reserva{};
+    reserva.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    reserva.descriptorPool = pool_;
+    reserva.descriptorSetCount = n_reserva;
+    reserva.pSetLayouts = layouts_reserva.data();
+    if (dfn_.vkAllocateDescriptorSets(device_, &reserva, reservados.data()) != VK_SUCCESS) {
+      return false;
+    }
+    n_sets_enlace_ = 0;
+    for (uint32_t i = 0; i < 4; ++i) {
+      if (layouts_[i] != VK_NULL_HANDLE) {
+        sets_[i] = reservados[n_sets_enlace_];
+        sets_enlace_[n_sets_enlace_++] = sets_[i];
+      } else {
+        sets_[i] = sets_[i - 1];
+      }
+    }
+    conjunto_ubo_ = n_sets_enlace_;
+'''
+
+CONJ_LAYOUT_ANCLA = '''    const std::array<VkDescriptorSetLayout, 5> layouts_pipeline = {layouts_[0], layouts_[1], layouts_[2],
+                                                                    layouts_[3], layout_ubo_};
+    info_layout.setLayoutCount = 5;
+'''
+
+CONJ_LAYOUT_NUEVO = '''    // PARCHE LOCAL (NFSMW Recompiled): con 4 conjuntos, sin el de cubos (va en el 1) y los UBO en el 3.
+    std::array<VkDescriptorSetLayout, 5> layouts_pipeline{};
+    uint32_t n_layouts = 0;
+    for (VkDescriptorSetLayout l : layouts_) {
+      if (l != VK_NULL_HANDLE) {
+        layouts_pipeline[n_layouts++] = l;
+      }
+    }
+    layouts_pipeline[n_layouts++] = layout_ubo_;
+    info_layout.setLayoutCount = n_layouts;
+'''
+
+CONJ_ENLACE1_ANCLA = '''      NFSMW_SUB(1, dfn_.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_pipeline_, 0, 4,
+                                                sets_.data(), 0, nullptr));
+'''
+
+CONJ_ENLACE1_NUEVO = '''      // PARCHE LOCAL (NFSMW Recompiled): los montones que haya (4 conjuntos: 3).
+      NFSMW_SUB(1, dfn_.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_pipeline_, 0,
+                                                n_sets_enlace_, sets_enlace_.data(), 0, nullptr));
+'''
+
+CONJ_ENLACE2_ANCLA = '''      dfn_.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_pipeline_, 0, 4,
+                                   sets_.data(), 0, nullptr);
+'''
+
+CONJ_ENLACE2_NUEVO = '''      // PARCHE LOCAL (NFSMW Recompiled): los montones que haya (4 conjuntos: 3).
+      dfn_.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_pipeline_, 0, n_sets_enlace_,
+                                   sets_enlace_.data(), 0, nullptr);
+'''
+
+CONJ_UBO1_ANCLA = '''NFSMW_SUB(2, dfn_.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_pipeline_, 4, 1,'''
+
+CONJ_UBO1_NUEVO = '''NFSMW_SUB(2, dfn_.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_pipeline_, conjunto_ubo_, 1,'''
+
+CONJ_UBO2_ANCLA = '''    dfn_.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_pipeline_, 4, 1,
+                                 &sets_ubo_[c.ranura_ubo], 3, c.offsets_ubo.data());
+'''
+
+CONJ_UBO2_NUEVO = '''    // PARCHE LOCAL (NFSMW Recompiled): los UBO van en el conjunto 3 si solo hay 4.
+    dfn_.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_pipeline_, conjunto_ubo_, 1,
+                                 &sets_ubo_[c.ranura_ubo], 3, c.offsets_ubo.data());
+'''
+
+CONJ_ESCRIBIR_ANCLA = '''    escritura.dstSet = sets_[monton];
+    escritura.dstBinding = 0;
+'''
+
+CONJ_ESCRIBIR_NUEVO = '''    escritura.dstSet = sets_[monton];
+    // PARCHE LOCAL (NFSMW Recompiled): con 4 conjuntos, el monton de cubos es el enlace 1 del conjunto 1.
+    escritura.dstBinding = cuatro_conjuntos_ && monton == 2 ? 1 : 0;
+'''
+
+CONJ_MODULO_ANCLA = '''  VkResult CrearModulo(const uint32_t* spirv, size_t bytes, VkShaderModule* modulo) {
+    VkShaderModuleCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    info.codeSize = bytes;
+    info.pCode = spirv;
+    std::vector<uint32_t> convertido;
+    if (spirv_13_ && nfsmw::spirv11::Necesita(spirv, bytes / 4)) {
+      convertido = nfsmw::spirv11::Convertir(spirv, bytes / 4);
+      if (!convertido.empty()) {
+        info.codeSize = convertido.size() * sizeof(uint32_t);
+        info.pCode = convertido.data();
+      }
+    }
+    return dfn_.vkCreateShaderModule(device_, &info, nullptr, modulo);
+  }
+'''
+
+CONJ_MODULO_NUEVO = '''  // PARCHE LOCAL (NFSMW Recompiled): con 4 conjuntos de descriptores (CrearDescriptores), las decoraciones
+  // del shader: el monton de cubos (conjunto 2) pasa al 1 con su enlace + 1, y samplers (3) y UBO (4) bajan
+  // uno. Si el SPIR-V esta roto se deja como este: que decida el driver.
+  static void JuntarConjuntos(std::vector<uint32_t>& p) {
+    constexpr uint32_t kOpDecorate = 71;
+    constexpr uint32_t kBinding = 33;
+    constexpr uint32_t kDescriptorSet = 34;
+    std::unordered_set<uint32_t> cubos;
+    for (size_t i = 5; i < p.size();) {
+      const uint32_t n = p[i] >> 16;
+      if (n == 0 || i + n > p.size()) {
+        return;
+      }
+      if ((p[i] & 0xFFFF) == kOpDecorate && n >= 4 && p[i + 2] == kDescriptorSet) {
+        if (p[i + 3] == 2) {
+          cubos.insert(p[i + 1]);
+          p[i + 3] = 1;
+        } else if (p[i + 3] == 3 || p[i + 3] == 4) {
+          --p[i + 3];
+        }
+      }
+      i += n;
+    }
+    for (size_t i = 5; i < p.size();) {
+      const uint32_t n = p[i] >> 16;
+      if ((p[i] & 0xFFFF) == kOpDecorate && n >= 4 && p[i + 2] == kBinding && cubos.count(p[i + 1])) {
+        ++p[i + 3];
+      }
+      i += n;
+    }
+  }
+
+  VkResult CrearModulo(const uint32_t* spirv, size_t bytes, VkShaderModule* modulo) {
+    VkShaderModuleCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    info.codeSize = bytes;
+    info.pCode = spirv;
+    std::vector<uint32_t> convertido;
+    if (spirv_13_ && nfsmw::spirv11::Necesita(spirv, bytes / 4)) {
+      convertido = nfsmw::spirv11::Convertir(spirv, bytes / 4);
+      if (!convertido.empty()) {
+        info.codeSize = convertido.size() * sizeof(uint32_t);
+        info.pCode = convertido.data();
+      }
+    }
+    if (cuatro_conjuntos_) {
+      if (convertido.empty()) {
+        convertido.assign(spirv, spirv + bytes / 4);
+      }
+      JuntarConjuntos(convertido);
+      info.codeSize = convertido.size() * sizeof(uint32_t);
+      info.pCode = convertido.data();
+    }
+    return dfn_.vkCreateShaderModule(device_, &info, nullptr, modulo);
+  }
+'''
+
+CONJ_CVAR_ANCLA = '''REXCVAR_DEFINE_BOOL(nfsmw_nativo_compartidas_cache, true, "NFSMW",
+'''
+
+CONJ_CVAR_NUEVO = '''// PARCHE LOCAL (NFSMW Recompiled): para probar en una GPU con 5 o mas conjuntos lo que hacen las de 4.
+REXCVAR_DEFINE_BOOL(nfsmw_nativo_cuatro_conjuntos, false, "NFSMW",
+                    "Renderizador nativo: juntar los montones de cubos y 3D en un conjunto de descriptores, como en "
+                    "las GPU que solo admiten 4 (maxBoundDescriptorSets). Solo pruebas: las de 4 lo hacen solas")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(nfsmw_nativo_compartidas_cache, true, "NFSMW",
+'''
+
+ORDENES_CONST_ANCLA = '''constexpr uint32_t kRetornoOrdenes = 0x82441DC4;
+'''
+
+ORDENES_CONST_NUEVO = '''constexpr uint32_t kRetornoOrdenes = 0x82441DC4;
+// PARCHE LOCAL (NFSMW Recompiled): la lista de ordenes de sub_823C8378 y sub_823C83F8 (ver abajo).
+constexpr uint32_t kListaOrdenes = 0x82909650;
+'''
+
+ORDENES_HOOK_ANCLA = '''  __imp__sub_823C83F8(ctx, base);
+}
+'''
+
+ORDENES_HOOK_NUEVO = '''  // PARCHE LOCAL (NFSMW Recompiled): solo las ordenes ya publicadas (ver sub_823C8378, abajo). El
+  // contador, con adquisicion: lo que sub_823C8378 escribio antes de su barrera ya se ve.
+  {
+    const uint32_t escritas = __builtin_bswap32(
+        __atomic_load_n(reinterpret_cast<const uint32_t*>(base + kListaOrdenes), __ATOMIC_ACQUIRE));
+    const uint32_t publicadas = escritas - Leer32(base, kListaOrdenes + 4);
+    if (ctx.r4.u32 > publicadas) {
+      ctx.r4.u64 = publicadas;
+    }
+  }
+  __imp__sub_823C83F8(ctx, base);
+}
+
+/*
+ * PARCHE LOCAL (NFSMW Recompiled): anadir una orden a la lista, con barrera.
+ *
+ * La original copia los datos de la orden al final de la lista, escribe en la entrada la funcion (+0) y el
+ * tamano redondeado a 16 (+4), mueve el final de la lista (+20) y sube su contador (+0), sin barreras. El
+ * ejecutor (arriba) las va haciendo a la vez desde otro hilo, y en ARM puede ver el contador nuevo antes que la
+ * entrada: llama a la funcion 0 y el juego se cierra. Aqui se escribe lo mismo y en el mismo sitio, con una
+ * barrera de liberacion antes de publicar el final y el contador. Con la lista cerrada (+12 a 0) la funcion
+ * se llama en el acto: eso lo sigue haciendo la original.
+ */
+REX_EXTERN(__imp__sub_823C8378);
+REX_HOOK_RAW(sub_823C8378) {
+  if (Leer32(base, kListaOrdenes + 12) == 0) {
+    __imp__sub_823C8378(ctx, base);
+    return;
+  }
+  const auto escribir = [base](uint32_t direccion, uint32_t valor) {
+    valor = __builtin_bswap32(valor);
+    std::memcpy(base + direccion, &valor, sizeof(valor));
+  };
+  const uint32_t bytes = (ctx.r6.u32 + 15) & ~15u;
+  const uint32_t entrada = Leer32(base, kListaOrdenes + 20);
+  std::memmove(base + entrada, base + ctx.r4.u32, bytes);
+  escribir(entrada + 0, ctx.r5.u32);
+  escribir(entrada + 4, bytes);
+  std::atomic_thread_fence(std::memory_order_release);
+  escribir(kListaOrdenes + 20, entrada + bytes);
+  escribir(kListaOrdenes + 0, Leer32(base, kListaOrdenes + 0) + 1);
+  ctx.r3.u64 = entrada;  // lo que deja la original: el resultado de su memmove
+}
+'''
+
+XCLIPSE_BC_ANCLA = '''      bc_cpu_[i] = REXCVAR_GET(nfsmw_nativo_texturas_bc_cpu) || (fp.optimalTilingFeatures & requerido) != requerido;
+'''
+
+XCLIPSE_BC_NUEVO = '''      // PARCHE LOCAL (NFSMW Recompiled): las Xclipse de Samsung dicen tener BC4 y BC5, pero su driver solo
+      // tiene completas BC1-3: BC4-7 las convierte el mismo en cada subida (tirones) por un camino a medias
+      // (XclipseDecomp; ExynosTools y Eden las esquivan). Esas dos, en la CPU, como sin BC.
+      const bool xclipse = propiedades.driverID == VK_DRIVER_ID_SAMSUNG_PROPRIETARY ||
+                           std::strstr(propiedades.deviceName, "Xclipse") != nullptr;
+      bc_cpu_[i] = REXCVAR_GET(nfsmw_nativo_texturas_bc_cpu) || (fp.optimalTilingFeatures & requerido) != requerido ||
+                   (xclipse && i >= 3);
+'''
+
 BLOQUES = [
     ("sdk/include/rex/filesystem.h", "declarar SetAndroidContentOpener", CABECERA_ANCLA, CABECERA_NUEVO),
     ("sdk/src/core/filesystem_posix.cpp", "abrir la URI con lo que ponga la app", FUENTE_ANCLA, FUENTE_NUEVO),
@@ -394,6 +772,27 @@ BLOQUES = [
      VIBRAR_PEDIR_ANCLA, VIBRAR_PEDIR_NUEVO),
     ("sdk/src/input/sdl/sdl_input_driver.cpp", "vibrar: el mando tactil tiene motores", VIBRAR_CAPS_ANCLA,
      VIBRAR_CAPS_NUEVO),
+    ("app/src/nfsmw_nativo_dibujos.cpp", "4 conjuntos: forzarlo para probar", CONJ_CVAR_ANCLA, CONJ_CVAR_NUEVO),
+    ("app/src/nfsmw_nativo_dibujos.cpp", "4 conjuntos: los miembros", CONJ_MIEMBROS_ANCLA, CONJ_MIEMBROS_NUEVO),
+    ("app/src/nfsmw_nativo_dibujos.cpp", "4 conjuntos: los layouts de los montones", CONJ_CREAR_ANCLA,
+     CONJ_CREAR_NUEVO),
+    ("app/src/nfsmw_nativo_dibujos.cpp", "4 conjuntos: reservar los de los montones", CONJ_RESERVA_ANCLA,
+     CONJ_RESERVA_NUEVO),
+    ("app/src/nfsmw_nativo_dibujos.cpp", "4 conjuntos: el layout de los pipelines", CONJ_LAYOUT_ANCLA,
+     CONJ_LAYOUT_NUEVO),
+    ("app/src/nfsmw_nativo_dibujos.cpp", "4 conjuntos: enlazar los montones (dibujo)", CONJ_ENLACE1_ANCLA,
+     CONJ_ENLACE1_NUEVO),
+    ("app/src/nfsmw_nativo_dibujos.cpp", "4 conjuntos: enlazar los montones (cielo)", CONJ_ENLACE2_ANCLA,
+     CONJ_ENLACE2_NUEVO),
+    ("app/src/nfsmw_nativo_dibujos.cpp", "4 conjuntos: los UBO (dibujo)", CONJ_UBO1_ANCLA, CONJ_UBO1_NUEVO),
+    ("app/src/nfsmw_nativo_dibujos.cpp", "4 conjuntos: los UBO (cielo)", CONJ_UBO2_ANCLA, CONJ_UBO2_NUEVO),
+    ("app/src/nfsmw_nativo_dibujos.cpp", "4 conjuntos: escribir el monton de cubos", CONJ_ESCRIBIR_ANCLA,
+     CONJ_ESCRIBIR_NUEVO),
+    ("app/src/nfsmw_nativo_dibujos.cpp", "4 conjuntos: los shaders", CONJ_MODULO_ANCLA, CONJ_MODULO_NUEVO),
+    ("app/src/nfsmw_espera_fotograma.cpp", "cola de ordenes: la direccion", ORDENES_CONST_ANCLA,
+     ORDENES_CONST_NUEVO),
+    ("app/src/nfsmw_espera_fotograma.cpp", "cola de ordenes: con barreras", ORDENES_HOOK_ANCLA, ORDENES_HOOK_NUEVO),
+    ("app/src/nfsmw_nativo_dibujos.cpp", "Xclipse: BC4 y BC5 en la CPU", XCLIPSE_BC_ANCLA, XCLIPSE_BC_NUEVO),
 ]
 
 

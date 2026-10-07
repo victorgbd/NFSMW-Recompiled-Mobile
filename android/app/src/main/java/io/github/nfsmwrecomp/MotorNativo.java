@@ -223,7 +223,7 @@ final class MotorNativo {
         if (Ajustes.gamertagValido(gamertag) && !gamertag.isEmpty()) {
             a.add("--user_gamertag=" + gamertag);
         }
-        if (!BuildConfig.DEBUG) {
+        if (!BuildConfig.DEBUG && !BuildConfig.REGISTRO) {
             a.add("--log_file=/dev/null");
             a.add("--log_level=off");
         } else {

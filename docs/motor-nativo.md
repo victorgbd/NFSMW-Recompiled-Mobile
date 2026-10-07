@@ -369,6 +369,50 @@ ejecutable". En Android esa es `REX_APP_FOLDER`, que `MotorNativo.java` pone en
 - **Fps.** El rótulo cuenta los fotogramas que presenta el juego
   (`g_nfsmw_fotogramas_juego`).
 
+## GPU que no son Adreno (Mali, PowerVR, Xclipse)
+
+Desde la 0.4.0 el árbol de nfsmw-android está en el commit `6df1501`, que adapta el
+renderizador a lo que falte en la GPU, solo cuando falta:
+
+| Si la GPU... | Qué hace |
+|---|---|
+| no tiene texturas BC1-5 (Mali, PowerVR) | las convierte en la CPU a RGBA8, R8 o RG8 al subirlas (más memoria y más carga al entrar en una zona) |
+| no tiene `shaderInt64` ni direcciones de buffer | nada: la biblioteca de shaders de Android lee las constantes siempre por UBO |
+| tiene Vulkan 1.1 | pasa el SPIR-V 1.5 de la biblioteca a 1.3 al crear cada shader; el SDK activa `VK_EXT_descriptor_indexing` |
+| es un Mali | no usa las consultas de oclusión (colgaban su driver): sin destello del sol |
+
+La biblioteca de shaders se genera con el `shader_common.h` de su app de Android
+(`android/app/src/main/assets/shaders`), "sin punteros", el mismo que copia
+`preparar_nativo.py` al instalador. Para la PAL sale con el SHA-256 que esperan ellos
+(`b84602ca…`).
+
+Lo que añade `parche_nativo.py` encima:
+
+- **4 conjuntos de descriptores** (sección 8). Los shaders usan 5 (montones 2D, 3D, cubos y
+  samplers, y los UBO) y Vulkan solo garantiza 4. Los Mali Valhall dan 4 y su driver se cae
+  dentro de `vkCreatePipelineLayout`. Con menos de 5, el montón de cubos va en el conjunto del
+  3D como enlace 1, samplers y UBO bajan uno, y `CrearModulo` cambia las decoraciones de cada
+  shader (`JuntarConjuntos`). `nfsmw_nativo_cuatro_conjuntos` lo fuerza en cualquier GPU.
+- **La cola de órdenes con barreras** (sección 9). No es de la GPU sino de la CPU ARM: el
+  cierre "Call to invalid or unregistered function at guest address 0x00000000" al empezar
+  carrera en móviles lentos.
+- **Xclipse: BC4 y BC5 en la CPU** (sección 10). Su driver dice tener todas las BC, pero
+  BC4-7 las convierte él mismo, a medias. Sin probar en un móvil con Xclipse.
+
+Probado en un Samsung A22 5G (Mali-G57 MC2, driver r32p1, Vulkan 1.1, 4 GB de RAM): menús a
+40-60 fps, carreras a 20-22 fps a 1024x576, limitado por la GPU (55-75 ms por fotograma a
+1280x720). Quedan fallos que solo salen con el driver de Mali: el retrovisor negro, una franja
+negra en el horizonte de la pista del bosque y el vídeo de demostración del menú duplicado. En
+el RedMagic con los mismos caminos forzados (`nfsmw_nativo_texturas_bc_cpu`,
+`nfsmw_nativo_simular_vulkan11`, `nfsmw_nativo_cuatro_conjuntos`,
+`nfsmw_consultas_oclusion=off`, a 1280x720) se ve bien.
+
+**PanVK** (Mesa para Mali sobre kbase, la compilación de FristOneRR para el Mali-G57) se probó
+como driver propio y no sirve, por ahora: en Android 13 necesita una libdrm más nueva que la
+del sistema (cargada con otro nombre), no puede crear la cadena de presentación con el gralloc
+de Samsung (`VK_ERROR_INVALID_EXTERNAL_HANDLE`: pantalla negra), sus BC salen negras, y aun con
+las BC en la CPU la mayoría de superficies salen negras. El retrovisor, en cambio, sí se ve.
+
 ## Qué falta
 
 - **Probar lo portado**: Turnip, el turbo, la sonda, la afinidad, el audio por AAudio

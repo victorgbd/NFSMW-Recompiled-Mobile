@@ -110,7 +110,10 @@
     <string name="fijar_hilos_resumen">Coloca as threads mais pesadas do jogo nos núcleos mais rápidos.</string>
     <string name="driver">Driver da GPU</string>
     <string name="ayuda_driver">Turnip é o driver livre do Mesa para Adreno. Importe o .zip de um driver Turnip (com meta.json) e escolha-o aqui.</string>
-    <string name="driver_sistema">Driver do sistema (Qualcomm)</string>
+    <string name="driver_sistema">Driver do sistema (%1$s)</string>
+    <string name="gpu_desconocida">desconhecida</string>
+    <string name="ayuda_driver_otra">Turnip, o driver livre do Mesa, é só para GPUs Adreno: com esta GPU (%1$s) o jogo usa o driver do sistema. Você pode importar outro driver Vulkan (.zip com meta.json) para testá-lo.</string>
+    <string name="driver_sistema_sin_gpu">Driver do sistema</string>
     <string name="importar_driver">Importar driver (.zip)</string>
     <string name="borrar_driver">Apagar o selecionado</string>
     <string name="driver_importado">Driver importado: %1$s</string>
@@ -120,7 +123,7 @@
     <string name="error_driver_sin_so">o zip não contém nenhuma .so de driver</string>
     <string name="error_driver_mover">não foi possível mover o driver para %1$s</string>
     <string name="turbo">Turbo da GPU</string>
-    <string name="turbo_resumen">Fixa o clock da GPU em vez de deixar o sistema ajustá-lo. Só com um driver próprio (Turnip). Nem sempre ajuda: confira com o contador de FPS.</string>
+    <string name="turbo_resumen">Fixa o clock da GPU em vez de deixar o sistema ajustá-lo. Só com Turnip em uma GPU Adreno. Nem sempre ajuda: confira com o contador de FPS.</string>
 
     <!-- Idioma -->
     <string name="seccion_idioma">Idioma</string>

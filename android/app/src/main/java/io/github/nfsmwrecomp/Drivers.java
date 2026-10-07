@@ -39,6 +39,15 @@ final class Drivers {
             this.carpeta = carpeta;
             this.libreria = libreria;
         }
+
+        /**
+         * Turnip (Mesa para Adreno): su libreria es libvulkan_freedreno.so. El
+         * turbo (KGSL) solo tiene sentido con el.
+         */
+        boolean esTurnip() {
+            return "libvulkan_freedreno.so".equals(libreria)
+                    || nombre.toLowerCase(java.util.Locale.ROOT).contains("turnip");
+        }
     }
 
     private Drivers() {}

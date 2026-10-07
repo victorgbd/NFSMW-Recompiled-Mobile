@@ -74,8 +74,8 @@ android {
         // de nombres que necesita. Por debajo no hay Snapdragon que merezca la pena.
         minSdk = 29
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 5
+        versionName = "0.4.0"
 
         buildConfigField("boolean", "CON_JUEGO", conJuego.toString())
         buildConfigField("String", "MOTOR", "\"$motor\"")
@@ -86,6 +86,9 @@ android {
         buildConfigField("String", "EDICION_XEX", "\"${edicion["sha256"] ?: ""}\"")
         buildConfigField("int", "JUEGO_IDIOMA", "${edicion["idioma"] ?: 5}")
         buildConfigField("int", "JUEGO_PAIS", "${edicion["pais"] ?: 31}")
+        // El log del juego tambien en release, para diagnosticar un movil:
+        //     gradlew assembleRelease -Pnfsmw.registro=true
+        buildConfigField("boolean", "REGISTRO", ((findProperty("nfsmw.registro") as String?) == "true").toString())
 
         ndk {
             // Solo ARM64: el codigo generado, las rutas NEON y adrenotools.
@@ -138,6 +141,10 @@ android {
             // Firmado con la clave de depuracion local: el APK es para instalarlo
             // en TUS dispositivos, no para una tienda.
             signingConfig = signingConfigs.getByName("debug")
+            // Para sacar ficheros de la app con "adb shell run-as" en una prueba
+            // (capturas, caches). El codigo nativo se compila igual:
+            //     gradlew assembleRelease -Pnfsmw.depurable=true
+            isDebuggable = (findProperty("nfsmw.depurable") as String?) == "true"
         }
     }
 

@@ -125,7 +125,10 @@
     <string name="fijar_hilos_resumen">Puts the game\'s heaviest threads on the fastest cores.</string>
     <string name="driver">GPU driver</string>
     <string name="ayuda_driver">Turnip is Mesa\'s open-source driver for Adreno. Import a Turnip driver .zip (with meta.json) and select it here.</string>
-    <string name="driver_sistema">System driver (Qualcomm)</string>
+    <string name="driver_sistema">System driver (%1$s)</string>
+    <string name="gpu_desconocida">unknown</string>
+    <string name="ayuda_driver_otra">Turnip, Mesa\'s open-source driver, is only for Adreno GPUs: with this GPU (%1$s) the game uses the system driver. You can import another Vulkan driver (.zip with meta.json) to try it.</string>
+    <string name="driver_sistema_sin_gpu">System driver</string>
     <string name="importar_driver">Import driver (.zip)</string>
     <string name="borrar_driver">Delete selected</string>
     <string name="driver_importado">Driver imported: %1$s</string>
@@ -135,7 +138,7 @@
     <string name="error_driver_sin_so">the zip contains no driver .so</string>
     <string name="error_driver_mover">could not move the driver to %1$s</string>
     <string name="turbo">GPU turbo</string>
-    <string name="turbo_resumen">Locks the GPU clock instead of letting the system adjust it. Only with a custom driver (Turnip). It does not always help: check with the FPS counter.</string>
+    <string name="turbo_resumen">Locks the GPU clock instead of letting the system adjust it. Only with Turnip on an Adreno GPU. It does not always help: check with the FPS counter.</string>
 
     <!-- Language -->
     <string name="seccion_idioma">Language</string>
