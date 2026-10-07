@@ -14,6 +14,7 @@
 //   - con el motor nativo: sirve su renderizador en esta GPU, y que adapta
 //     (BC en CPU, sin enteros de 64 bits, Vulkan 1.1, Mali)?
 
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <memory>
@@ -62,6 +63,38 @@ const char* NombreDriver(VkDriverId id) {
   }
 }
 
+// Mali de Arm: por el vendor (0x13B5) o por el driver, no solo por el nombre. Las nuevas se llaman
+// "Mali-G715", "Immortalis-G715" o "Mali-G720-Immortalis MC12".
+bool EsMali(const VkPhysicalDeviceProperties& props, VkDriverId driver) {
+  return props.vendorID == 0x13B5 || driver == VK_DRIVER_ID_ARM_PROPRIETARY ||
+         std::strstr(props.deviceName, "Mali") != nullptr ||
+         std::strstr(props.deviceName, "Immortalis") != nullptr;
+}
+
+bool EsXclipse(const VkPhysicalDeviceProperties& props, VkDriverId driver) {
+  return driver == VK_DRIVER_ID_SAMSUNG_PROPRIETARY || std::strstr(props.deviceName, "Xclipse") != nullptr;
+}
+
+// La generacion de un Mali por el numero tras la "G": G31, G51, G52, G71, G72 y G76 Bifrost; G57, G68, G77, G78 y G310-G715 Valhall,
+// G715 Valhall con trazado de rayos, G720 en adelante la 5.a generacion.
+const char* GeneracionMali(const char* nombre) {
+  const char* g = std::strchr(nombre, 'G');
+  while (g && !(g[1] >= '0' && g[1] <= '9')) {
+    g = std::strchr(g + 1, 'G');
+  }
+  if (!g) {
+    return "generacion desconocida";
+  }
+  const int numero = std::atoi(g + 1);
+  if (numero >= 720) {
+    return "5.a generacion (Arm Immortalis/Mali moderno)";
+  }
+  if (numero == 31 || numero == 51 || numero == 52 || numero == 71 || numero == 72 || numero == 76) {
+    return "Bifrost";
+  }
+  return "Valhall";
+}
+
 class Informe {
  public:
   void Linea(const std::string& texto) {
@@ -91,6 +124,7 @@ void SondearDispositivo(Informe& inf, const VulkanInstance& instancia, VkPhysica
   inf.Linea(fmt::format("Vulkan del dispositivo: {}", Version(props.apiVersion)));
 
   // Que driver es de verdad. Es la respuesta a "se ha cargado Turnip?".
+  VkDriverId driver_id = static_cast<VkDriverId>(0);
   if (props.apiVersion >= VK_MAKE_API_VERSION(0, 1, 2, 0) && ifn.vkGetPhysicalDeviceProperties2) {
     VkPhysicalDeviceDriverProperties driver{};
     driver.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES;
@@ -98,6 +132,7 @@ void SondearDispositivo(Informe& inf, const VulkanInstance& instancia, VkPhysica
     props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
     props2.pNext = &driver;
     ifn.vkGetPhysicalDeviceProperties2(fisico, &props2);
+    driver_id = driver.driverID;
     inf.Linea(fmt::format("Driver: {}  [{}]  {} {}", NombreDriver(driver.driverID),
                           static_cast<int>(driver.driverID), driver.driverName,
                           driver.driverInfo));
@@ -121,7 +156,8 @@ void SondearDispositivo(Informe& inf, const VulkanInstance& instancia, VkPhysica
   std::string bc_en_cpu;
   // Las Xclipse de Samsung dicen tener BC4 y BC5, pero su driver las convierte el mismo por un camino a
   // medias: el motor nativo las pasa por la CPU (parche_nativo.py, seccion 10).
-  const bool xclipse = std::strstr(props.deviceName, "Xclipse") != nullptr;
+  const bool xclipse = EsXclipse(props, driver_id);
+  const bool mali = EsMali(props, driver_id);
   for (const auto& [formato, nombre] : formatos) {
     VkFormatProperties fp{};
     ifn.vkGetPhysicalDeviceFormatProperties(fisico, formato, &fp);
@@ -136,6 +172,15 @@ void SondearDispositivo(Informe& inf, const VulkanInstance& instancia, VkPhysica
   inf.Linea("Texturas comprimidas: " + bc);
   VkPhysicalDeviceFeatures rasgos_base{};
   ifn.vkGetPhysicalDeviceFeatures(fisico, &rasgos_base);
+  if (mali) {
+    inf.Linea(fmt::format("Mali: {}, driver {}", GeneracionMali(props.deviceName),
+                          Version(props.driverVersion)));
+  }
+  // Lo que decide si el motor nativo usa 4 conjuntos de descriptores (menos de 5) y si caben sus montones
+  // de texturas (update-after-bind).
+  inf.Linea(fmt::format("Conjuntos de descriptores (maxBoundDescriptorSets): {}{}",
+                        props.limits.maxBoundDescriptorSets,
+                        props.limits.maxBoundDescriptorSets < 5 ? "  -> el motor nativo usa 4 conjuntos" : ""));
   inf.Linea(fmt::format("Enteros de 64 bits en shaders (shaderInt64): {}",
                         rasgos_base.shaderInt64 ? "si" : "NO"));
 
@@ -178,7 +223,7 @@ void SondearDispositivo(Informe& inf, const VulkanInstance& instancia, VkPhysica
       if (props.apiVersion < VK_MAKE_API_VERSION(0, 1, 2, 0)) {
         inf.Linea("  - Vulkan 1.1: los shaders se pasan de SPIR-V 1.5 a 1.3 al crearlos");
       }
-      if (props.vendorID == 0x13B5) {
+      if (mali) {
         inf.Linea("  - Mali: sin consultas de oclusion (sin el destello del sol), por los cuelgues "
                   "de su driver");
       }

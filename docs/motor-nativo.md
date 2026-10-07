@@ -407,6 +407,18 @@ el RedMagic con los mismos caminos forzados (`nfsmw_nativo_texturas_bc_cpu`,
 `nfsmw_nativo_simular_vulkan11`, `nfsmw_nativo_cuatro_conjuntos`,
 `nfsmw_consultas_oclusion=off`, a 1280x720) se ve bien.
 
+**Mali nuevos (Valhall tardíos y 5.ª generación: G710, G715/Immortalis-G715, G720, G725, G925).**
+No hay ninguno entre los móviles de prueba, así que nada de lo de arriba está comprobado en ellos.
+Lo que sí hace el código para no depender de adivinar: los caminos de compatibilidad (BC en la CPU,
+4 conjuntos de descriptores, SPIR-V 1.3) se activan por lo que **dice el driver**
+(`optimalTilingFeatures`, `maxBoundDescriptorSets`, versión de Vulkan), no por el nombre de la GPU,
+así que un Mali nuevo que sí tenga 5 conjuntos o Vulkan 1.3 usa el camino normal. La única decisión
+por marca es la de las consultas de oclusión, que se desactivan en todo Mali (vendor `0x13B5`) y
+pierden el destello del sol; en los nuevos puede que no haga falta. La sonda (pantalla de inicio)
+detecta el Mali por vendor, driver o nombre, y escribe en su informe la generación, la versión del
+driver y `maxBoundDescriptorSets`. **Para validar un Mali nuevo**: pasar la sonda, mirar que diga
+"MOTOR NATIVO: sirve" y copiar ese informe al informar de un problema.
+
 **PanVK** (Mesa para Mali sobre kbase, la compilación de FristOneRR para el Mali-G57) se probó
 como driver propio y no sirve, por ahora: en Android 13 necesita una libdrm más nueva que la
 del sistema (cargada con otro nombre), no puede crear la cadena de presentación con el gralloc
