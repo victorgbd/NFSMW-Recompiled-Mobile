@@ -126,6 +126,12 @@ void Escribir(uint8_t* base, const std::string& texto) {
     uint32_t bits = 0;
     std::memcpy(&bits, &valor, sizeof(bits));
     bits = __builtin_bswap32(bits);
+    // Las constantes suelen estar en .rdata, que el runtime deja de solo lectura: sin esto la
+    // escritura es "Unhandled guest access violation" (el 16:9 de la PAL, 0x8200FAC0, esta ahi).
+    // Se abre la pagina para escribir y se queda asi: es para medir.
+    static const uintptr_t pagina = uintptr_t(sysconf(_SC_PAGESIZE));
+    void* inicio = reinterpret_cast<void*>(uintptr_t(base + dir) & ~(pagina - 1));
+    mprotect(inicio, pagina, PROT_READ | PROT_WRITE);
     std::memcpy(base + dir, &bits, sizeof(bits));
   }
 }
@@ -168,6 +174,9 @@ INCLUDE_ANCLA = '''#include <rex/cvar.h>
 '''
 
 INCLUDE_NUEVO = '''#include <cstdlib>
+
+#include <sys/mman.h>
+#include <unistd.h>
 
 #include <fmt/format.h>
 

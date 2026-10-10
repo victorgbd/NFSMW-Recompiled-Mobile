@@ -18,6 +18,16 @@
     <string name="res_interna_576">1024×576 · mais rápida</string>
     <string name="res_interna_720">1280×720 · Xbox 360</string>
     <string name="res_interna_1080">1920×1080 · mais nítida</string>
+    <string name="calidad_sombras">Qualidade das sombras</string>
+    <string name="calidad_sombras_resumen">Bordas suaves suaviza o contorno da sombra, como no Xbox 360 (mais GPU). Como no Xbox 360 também traz de volta a sombra de árvores, arbustos e cercas (mais CPU).</string>
+    <string name="sombras_rapida">Rápida</string>
+    <string name="sombras_suave">Bordas suaves</string>
+    <string name="sombras_xbox360">Como no Xbox 360</string>
+    <string name="resolucion_sombras">Resolução das sombras</string>
+    <string name="sombras_nativa">Nativa (Xbox 360)</string>
+    <string name="sombras_alta">Alta</string>
+    <string name="sombras_muy_alta">Muito alta</string>
+    <string name="sombras_ultra">Ultra</string>
     <string name="sombras">Sombras</string>
     <string name="sombras_resumen">A cada quanto os mapas de sombras são redesenhados. A cada 2 quadros custa menos e quase não se nota.</string>
     <string name="sombras_siempre">Todo quadro</string>

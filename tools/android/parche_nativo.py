@@ -160,6 +160,36 @@ XclipseDecomp; ExynosTools y el emulador Eden las esquivan). El juego usa BC4
 (DXT5A) y BC5 (DXN, mapas de normales): en una Xclipse van por la conversion en
 CPU del renderizador, la misma que en las GPU sin BC. Sin probar en un movil
 con Xclipse.
+
+
+11. MAPA DE SOMBRAS MAS GRANDE QUE EL DE LA XBOX 360
+====================================================
+
+El juego pide dos mapas de sombras de 1600x1600 (2000 de las 2048 baldosas de
+la EDRAM), y ahi se dibujan tambien los coches: su sombra sale con poca
+definicion. El renderizador ya sabe dibujar el mapa a otro tamano
+(nfsmw_nativo_sombras_escala), pero solo por debajo de 100 %. Por encima vale
+el mismo camino: la textura resuelta se crea al tamano del mapa, la copia es
+1 a 1 y la escena la muestrea con coordenadas normalizadas, asi que sale con
+mas detalle. Aqui se deja subir hasta 250 % (4000x4000) y se arregla lo unico
+que suponia un mapa mas pequeno: el alto util que recorta las restauraciones
+venia en pixeles del juego (1600) y con un mapa mas grande dejaba la parte de
+abajo sin restaurar. Ahora va en pixeles de la imagen.
+
+
+12. LAS ESTELAS DE LUZ DEL NITRO, DEL LARGO DE LA XBOX 360 A CUALQUIER FPS
+=========================================================================
+
+VehicleRenderConn::RenderFlares (sub_824E63D8) guarda, en cada fotograma de la
+vista del jugador, la posicion y la matriz del coche en un anillo de 3 y, con
+el nitro, dibuja destellos entre esas tres: la estela es lo que avanza el coche
+en dos fotogramas. En la Xbox 360, a 30 fps, son 66 ms; a 60, la mitad de larga
+(comprobado en el movil: con el limite a 30 sale como en Xenia). Aqui, antes de
+la original, los dos huecos del anillo que no va a escribir se llenan con la
+posicion de hace 1/30 s y 2/30 s, interpoladas de un historial propio por
+coche, y la original pone la de ahora en el tercero: el mismo largo a 30, 60,
+90, 120 fps o sin limite, y pegada al coche. nfsmw_estelas_nitro_30 = false lo
+quita.
 """
 
 import argparse
@@ -753,6 +783,273 @@ XCLIPSE_BC_NUEVO = '''      // PARCHE LOCAL (NFSMW Recompiled): las Xclipse de S
                    (xclipse && i >= 3);
 '''
 
+SOMBRAS_CVAR_ANCLA = '''                     "mismo juego (1024). El valor se toma al crear el primer mapa y no cambia en marcha")
+    .range(50, 100);
+'''
+
+SOMBRAS_CVAR_NUEVO = '''                     "mismo juego (1024). El valor se toma al crear el primer mapa y no cambia en marcha. "
+                     "PARCHE LOCAL (NFSMW Recompiled): hasta 250 (4000x4000), mas definicion en las sombras "
+                     "de los coches")
+    .range(50, 250);
+'''
+
+SOMBRAS_TAMANO_ANCLA = '''        escala_sombras_ = uint32_t(std::clamp(REXCVAR_GET(nfsmw_nativo_sombras_escala), 50, 100));
+        if (!blit_ || !profundidad_escalable_) {
+          escala_sombras_ = 100;
+        }
+      }
+      if (escala_sombras_ < 100) {
+'''
+
+SOMBRAS_TAMANO_NUEVO = '''        // PARCHE LOCAL (NFSMW Recompiled): tambien por encima de 100 %. La resuelta sigue al mapa y la
+        // copia es 1 a 1 (CopiarProfundidad), igual que al reducirlo: mas grande es mas detalle.
+        escala_sombras_ = uint32_t(std::clamp(REXCVAR_GET(nfsmw_nativo_sombras_escala), 50, 250));
+        if (!blit_ || !profundidad_escalable_) {
+          escala_sombras_ = 100;
+        }
+      }
+      if (escala_sombras_ != 100) {
+'''
+
+SOMBRAS_AREA_ANCLA = '''  void AnotarAreaUtil(const Imagen& destino, int32_t y1) {
+    if (y1 > 0) {
+      auto& e = estado_destino_[&destino];
+      e.alto_usado = std::max(e.alto_usado, std::min(uint32_t(y1), destino.alto));
+    }
+  }
+'''
+
+SOMBRAS_AREA_NUEVO = '''  void AnotarAreaUtil(const Imagen& destino, int32_t y1) {
+    if (y1 > 0) {
+      auto& e = estado_destino_[&destino];
+      // PARCHE LOCAL (NFSMW Recompiled): y1 viene en pixeles del juego. En el mapa de sombras escalado
+      // la imagen tiene otro alto: se pasa a pixeles de la imagen, o con un mapa mas grande que 1600 la
+      // restauracion (RestaurarContenido) dejaba sin copiar lo de abajo.
+      uint32_t alto = uint32_t(y1);
+      if (destino.alto_guest && destino.alto_guest != destino.alto) {
+        alto = uint32_t((uint64_t(alto) * destino.alto + destino.alto_guest - 1) / destino.alto_guest);
+      }
+      e.alto_usado = std::max(e.alto_usado, std::min(alto, destino.alto));
+    }
+  }
+'''
+
+ESTELAS_ANCLA = '''  if (!g_aviso_caras.exchange(true)) {
+    REXLOG_INFO("[recortes] carrera: cubemap limitado a {} cara(s) por fotograma mas {} fija(s) "
+                "(mascara 0x{:X}; el juego activaba {})",
+                maximo, fijas, siempre, n + fijas);
+  }
+}
+'''
+
+ESTELAS_NUEVO = ESTELAS_ANCLA + '''
+/*
+ * PARCHE LOCAL (NFSMW Recompiled): las estelas de luz del nitro, del largo de la Xbox 360 a cualquier fps.
+ *
+ * VehicleRenderConn::RenderFlares (sub_824E63D8; r3 la vista, r4 el reflejo) guarda en cada fotograma de la
+ * vista del jugador (id 1 o 2 en +4, sin reflejo) la posicion y la matriz del coche en un anillo de 3 de su
+ * CarRenderInfo (VehicleRenderConn +68): el indice en +4752, las matrices (64 bytes) en +4512 y las
+ * posiciones (16 bytes) en +4704. Con el nitro dibuja destellos entre esas tres, asi que la estela es lo que
+ * avanza el coche en dos fotogramas: 66 ms en la consola, a 30 fps, y la mitad a 60. Antes de la original,
+ * los dos huecos que no va a escribir (el mas viejo y el del medio) se llenan con la posicion de hace 2/30 s y
+ * 1/30 s, interpoladas de un historial propio por coche hecho con lo que la original escribe; la original pone
+ * la de ahora en el tercero. Solo ella lee el anillo. Sin historial suficiente (los primeros fotogramas) se
+ * deja lo del juego.
+ */
+#include <array>
+#include <deque>
+
+REXCVAR_DEFINE_BOOL(nfsmw_estelas_nitro_30, true, "NFSMW",
+                    "Estelas de luz del nitro con el largo de la Xbox 360 (30 fps) a cualquier limite de fps. "
+                    "false = como el juego, que las acorta al subir los fps");
+
+namespace nfsmw::estelas_nitro {
+namespace {
+constexpr uint32_t kListaCoches = 0x82C84D38;  // VehicleRenderConn::GetList(): +4 el array, +12 cuantos
+constexpr uint32_t kOffInfo = 68;              // VehicleRenderConn -> CarRenderInfo
+constexpr uint32_t kOffIndice = 4752;          // CarRenderInfo::matrixIndex
+constexpr uint32_t kOffMatrices = 4512;        // CarRenderInfo::LastFewMatrices[3]
+constexpr uint32_t kOffPosiciones = 4704;      // CarRenderInfo::LastFewPositions[3]
+constexpr double kPaso = 1.0 / 30.0;           // un fotograma de la Xbox 360
+constexpr double kGuardar = 0.25;              // segundos de historial
+constexpr size_t kMaxMuestras = 96;
+constexpr size_t kMaxCoches = 32;
+constexpr uint32_t kMaxLista = 64;
+
+struct Muestra {
+  double t;
+  float pos[3];
+  uint8_t matriz[64];  // tal cual en la memoria del juego
+};
+struct Historial {
+  uint32_t info = 0;
+  double usado = 0;
+  std::deque<Muestra> muestras;
+};
+std::array<Historial, kMaxCoches> g_historiales;
+
+uint32_t Leer(const uint8_t* base, uint32_t dir) {
+  uint32_t v;
+  std::memcpy(&v, base + dir, sizeof(v));
+  return __builtin_bswap32(v);
+}
+float LeerF(const uint8_t* base, uint32_t dir) {
+  const uint32_t v = Leer(base, dir);
+  float f;
+  std::memcpy(&f, &v, sizeof(f));
+  return f;
+}
+void EscribirF(uint8_t* base, uint32_t dir, float f) {
+  uint32_t v;
+  std::memcpy(&v, &f, sizeof(v));
+  v = __builtin_bswap32(v);
+  std::memcpy(base + dir, &v, sizeof(v));
+}
+
+Historial* Buscar(uint32_t info) {
+  for (auto& h : g_historiales) {
+    if (h.info == info) {
+      return &h;
+    }
+  }
+  return nullptr;
+}
+Historial& BuscarOCrear(uint32_t info, double ahora) {
+  if (Historial* h = Buscar(info)) {
+    return *h;
+  }
+  Historial* libre = &g_historiales[0];
+  for (auto& h : g_historiales) {
+    if (h.info == 0) {
+      libre = &h;
+      break;
+    }
+    if (h.usado < libre->usado) {
+      libre = &h;
+    }
+  }
+  libre->info = info;
+  libre->muestras.clear();
+  libre->usado = ahora;
+  return *libre;
+}
+
+// La posicion en el instante t, interpolada entre las dos muestras que lo rodean, y la matriz de la mas
+// cercana. false si t es anterior a la muestra mas vieja.
+bool Interpolar(const Historial& h, double t, float pos[3], const uint8_t** matriz) {
+  const auto& m = h.muestras;
+  if (m.empty() || t < m.front().t) {
+    return false;
+  }
+  for (size_t i = m.size(); i-- > 0;) {
+    if (m[i].t <= t) {
+      if (i + 1 >= m.size()) {
+        std::memcpy(pos, m[i].pos, sizeof(m[i].pos));
+        *matriz = m[i].matriz;
+        return true;
+      }
+      const Muestra& a = m[i];
+      const Muestra& b = m[i + 1];
+      const double tramo = b.t - a.t;
+      const float f = tramo > 0 ? float((t - a.t) / tramo) : 0.0f;
+      for (int k = 0; k < 3; ++k) {
+        pos[k] = a.pos[k] + (b.pos[k] - a.pos[k]) * f;
+      }
+      *matriz = f < 0.5f ? a.matriz : b.matriz;
+      return true;
+    }
+  }
+  return false;
+}
+
+void Rellenar(uint8_t* base, uint32_t info, int32_t hueco, const float pos[3], const uint8_t* matriz) {
+  const uint32_t p = info + kOffPosiciones + uint32_t(hueco) * 16;
+  for (int k = 0; k < 3; ++k) {
+    EscribirF(base, p + uint32_t(k) * 4, pos[k]);
+  }
+  std::memcpy(base + info + kOffMatrices + uint32_t(hueco) * 64, matriz, 64);
+}
+}  // namespace
+}  // namespace nfsmw::estelas_nitro
+
+REX_EXTERN(__imp__sub_824E63D8);
+REX_HOOK_RAW(sub_824E63D8) {
+  using namespace nfsmw::estelas_nitro;
+  const uint32_t vista = ctx.r3.u32;
+  const uint32_t reflejo = ctx.r4.u32;
+  const uint32_t id_vista = vista ? Leer(base, vista + 4) : 0;
+  if (!REXCVAR_GET(nfsmw_estelas_nitro_30) || reflejo != 0 || (id_vista != 1 && id_vista != 2)) {
+    __imp__sub_824E63D8(ctx, base);
+    return;
+  }
+  const double ahora =
+      std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  const uint32_t lista = Leer(base, kListaCoches + 4);
+  const uint32_t cuantos = lista ? std::min(Leer(base, kListaCoches + 12), kMaxLista) : 0;
+  std::array<uint32_t, kMaxLista> infos{};
+  std::array<int32_t, kMaxLista> indices{};
+  for (uint32_t i = 0; i < cuantos; ++i) {
+    const uint32_t conn = Leer(base, lista + i * 4);
+    const uint32_t info = conn ? Leer(base, conn + kOffInfo) : 0;
+    infos[i] = info;
+    if (!info) {
+      continue;
+    }
+    const int32_t indice = int32_t(Leer(base, info + kOffIndice));
+    indices[i] = indice;
+    Historial* h = Buscar(info);
+    if (!h || h->muestras.empty() || ahora - h->muestras.back().t > kGuardar) {
+      continue;
+    }
+    // El hueco que va a escribir la original: indice < 0 -> 0, y luego +1 dando la vuelta a 3.
+    int32_t nuevo = (indice < 0 ? 0 : indice) + 1;
+    if (nuevo > 2) {
+      nuevo = 0;
+    }
+    float pos[3];
+    const uint8_t* matriz = nullptr;
+    if (Interpolar(*h, ahora - kPaso, pos, &matriz)) {
+      Rellenar(base, info, (nuevo + 2) % 3, pos, matriz);  // el del medio: hace un fotograma de la consola
+    }
+    if (Interpolar(*h, ahora - 2 * kPaso, pos, &matriz)) {
+      Rellenar(base, info, (nuevo + 1) % 3, pos, matriz);  // el mas viejo: hace dos
+      static std::atomic<bool> anotado{false};
+      if (!anotado.exchange(true)) {
+        REXLOG_INFO("[estelas] nitro: la estela va con el largo de la Xbox 360 (posiciones de hace 1/30 s "
+                    "y 2/30 s, {} muestras del coche; {} coches en la lista)",
+                    h->muestras.size(), cuantos);
+      }
+    }
+  }
+  __imp__sub_824E63D8(ctx, base);
+  // Lo que la original acaba de guardar, al historial (solo los coches cuyo indice ha avanzado).
+  for (uint32_t i = 0; i < cuantos; ++i) {
+    const uint32_t info = infos[i];
+    if (!info) {
+      continue;
+    }
+    const int32_t indice = int32_t(Leer(base, info + kOffIndice));
+    if (indice == indices[i] || indice < 0 || indice > 2) {
+      continue;
+    }
+    Historial& h = BuscarOCrear(info, ahora);
+    h.usado = ahora;
+    Muestra m;
+    m.t = ahora;
+    const uint32_t p = info + kOffPosiciones + uint32_t(indice) * 16;
+    for (int k = 0; k < 3; ++k) {
+      m.pos[k] = LeerF(base, p + uint32_t(k) * 4);
+    }
+    std::memcpy(m.matriz, base + info + kOffMatrices + uint32_t(indice) * 64, sizeof(m.matriz));
+    h.muestras.push_back(m);
+    while (h.muestras.size() > kMaxMuestras ||
+           (h.muestras.size() > 2 && ahora - h.muestras.front().t > kGuardar)) {
+      h.muestras.pop_front();
+    }
+  }
+}
+'''
+
 BLOQUES = [
     ("sdk/include/rex/filesystem.h", "declarar SetAndroidContentOpener", CABECERA_ANCLA, CABECERA_NUEVO),
     ("sdk/src/core/filesystem_posix.cpp", "abrir la URI con lo que ponga la app", FUENTE_ANCLA, FUENTE_NUEVO),
@@ -793,6 +1090,14 @@ BLOQUES = [
      ORDENES_CONST_NUEVO),
     ("app/src/nfsmw_espera_fotograma.cpp", "cola de ordenes: con barreras", ORDENES_HOOK_ANCLA, ORDENES_HOOK_NUEVO),
     ("app/src/nfsmw_nativo_dibujos.cpp", "Xclipse: BC4 y BC5 en la CPU", XCLIPSE_BC_ANCLA, XCLIPSE_BC_NUEVO),
+    ("app/src/nfsmw_nativo_destinos.cpp", "sombras mas grandes: el ajuste", SOMBRAS_CVAR_ANCLA,
+     SOMBRAS_CVAR_NUEVO),
+    ("app/src/nfsmw_nativo_destinos.cpp", "sombras mas grandes: el tamano del mapa", SOMBRAS_TAMANO_ANCLA,
+     SOMBRAS_TAMANO_NUEVO),
+    ("app/src/nfsmw_nativo_destinos.cpp", "sombras mas grandes: el alto util en pixeles de la imagen",
+     SOMBRAS_AREA_ANCLA, SOMBRAS_AREA_NUEVO),
+    ("app/src/nfsmw_recortes_carrera.cpp", "estelas del nitro del largo de la Xbox 360", ESTELAS_ANCLA,
+     ESTELAS_NUEVO),
 ]
 
 

@@ -10,6 +10,18 @@ proyecto vibe-codeado: ver la sección "This fork" del [README](README.md).
 
 ### Añadido
 
+- Calidad de las sombras en Gráficos (motor nativo, 0.4.1): Rápida (como venía: un solo muestreo
+  del mapa de sombras y sin la sombra de la vegetación), Bordes suaves (el patrón 3x3 de la
+  Xbox 360, que difumina el contorno; cuesta GPU) y Como la Xbox 360 (además, árboles,
+  arbustos y vallas vuelven a dar sombra; cuesta sobre todo CPU). Por defecto, Rápida. La
+  resolución del mapa va aparte.
+- Resolución de las sombras en Gráficos (motor nativo, 0.4.1), un desplegable: Nativa (1600, la de la
+  Xbox 360), Alta (2400), Muy alta (3200) o Ultra (4000).
+  El mapa de sombras es también el de los coches, y con más resolución su sombra gana
+  definición. Su motor solo dejaba bajarla: `parche_nativo.py` (sección 11) le deja subir
+  hasta 250 % y arregla el alto útil de las restauraciones, que con un mapa de más de 1600
+  dejaba sin copiar la parte de abajo. En el RedMagic, a 3200 y 1080p, ~0,8 ms más de GPU por fotograma
+  y la carrera sigue a 60 fps. Por defecto, 1600.
 - Motor nativo en GPU que no son Adreno (0.4.0). El árbol de nfsmw-android pasa al commit
   `6df1501`, que trae lo que hace falta para los Mali, PowerVR y Adreno con drivers
   antiguos, y que solo se activa si a la GPU le falta algo: las texturas BC1-5 se convierten
@@ -273,6 +285,12 @@ proyecto vibe-codeado: ver la sección "This fork" del [README](README.md).
 
 ### Cambiado
 
+- Controles táctiles conduciendo (0.4.1; el resto de carreras, la conducción libre y las
+  persecuciones): el stick derecho vuelve a ser un stick, como antes de esa disposición. La
+  palanca de cambios queda solo en las carreras de aceleración. Nueva disposición de fábrica
+  para los sticks, la que dejó el usuario en el móvil: el izquierdo en su sitio pero a 1,5
+  veces su tamaño, y el derecho a su derecha y algo más abajo. Lo movido con el editor se
+  conserva.
 - Driver de audio AAudio de Android (`android/app/src/main/cpp/audio/`), más ligero:
   - El anillo de muestras va **sin cerrojo** (un productor, un consumidor, con atómicos).
     Antes el callback de tiempo real de AAudio cogía el mismo mutex que el hilo del juego,
@@ -382,6 +400,10 @@ proyecto vibe-codeado: ver la sección "This fork" del [README](README.md).
 
 ### Arreglado
 
+- Las estelas de luz de los pilotos con el nitro salían la mitad de largas que en la Xbox 360
+  a 60 fps: el juego las dibuja entre las 3 últimas posiciones del coche, una por fotograma, y
+  la consola va a 30. `parche_nativo.py` (sección 12) le da las posiciones de hace 1/30 s y
+  2/30 s, así que miden lo mismo a cualquier límite de fps (comprobado en el móvil).
 - El juego se cerraba al empezar una carrera en móviles lentos (Samsung A22: 3 de 3
   carreras) con "Call to invalid or unregistered function at guest address 0x00000000".
   Los dos hilos del juego se pasan órdenes por una lista (0x82909650): uno las añade

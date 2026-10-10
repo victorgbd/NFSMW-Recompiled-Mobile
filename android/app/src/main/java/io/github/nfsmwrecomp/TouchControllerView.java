@@ -52,9 +52,10 @@ import java.util.List;
  * ve. En aceleracion siguen las flechas de carril, y en los menus nada cambia.
  *
  * TRES DISPOSICIONES: la normal (menus y cargas), la de conducir (carreras que
- * no son de aceleracion, conduccion libre y persecuciones: pedales, palanca,
- * camara y retrovisor como en aceleracion, pero con el stick izquierdo para
- * girar y la cruceta) y la de las carreras de aceleracion. Cada una con su
+ * no son de aceleracion, conduccion libre y persecuciones: pedales, camara y
+ * retrovisor como en aceleracion, pero con el stick izquierdo para girar, la
+ * cruceta y el stick derecho de siempre, no la palanca) y la de las carreras
+ * de aceleracion. Cada una con su
  * disposicion de fabrica y lo que se guarde con el editor ("<id>_x", "c_<id>_x"
  * y "a_<id>_x"...). El editor elige cual se edita; desde la partida, la de la
  * parte del juego en que se este. RESTAURAR vuelve a la de fabrica de la que
@@ -677,16 +678,20 @@ public final class TouchControllerView extends View {
 
         // --- La de fabrica conduciendo (las demas carreras, la conduccion libre
         // y las persecuciones): la de aceleracion, pero con el stick izquierdo
-        // para girar, sobre la misma linea y en el reflejo de los dos pedales, y
-        // la cruceta, que aqui hace mas que abrir la clasificacion (abajo
-        // recoloca el coche), en el reflejo de los botones en rombo.
-        for (Control c : new Control[] {rightTrigger, leftTrigger, rightStick, a, b, x, y, rb, lb,
+        // para girar, sobre la misma linea, en el reflejo de los dos pedales y
+        // a 1,5 veces su tamano; el derecho, un stick y no la palanca, a su
+        // derecha y algo mas abajo; y la cruceta, que aqui hace mas que abrir la
+        // clasificacion (abajo recoloca el coche), en el reflejo de los botones
+        // en rombo. Los sticks, como los dejo el usuario en el movil (2688x1216).
+        for (Control c : new Control[] {rightTrigger, leftTrigger, a, b, x, y, rb, lb,
                                         back, start}) {
             c.porDefecto(CONDUCIENDO, c.fx[ACELERACION], c.fy[ACELERACION], c.fs[ACELERACION]);
         }
         float pedalesIzq = frenoX - shoulderW * pedal * .74f * .5f;
         float pedalesDer = acelX + shoulderW * pedal * .6f * .5f;
-        leftStick.porDefecto(CONDUCIENDO, width - (pedalesIzq + pedalesDer) * .5f, pie - stickRadius, 1f);
+        float stickIzqX = width - (pedalesIzq + pedalesDer) * .5f;
+        leftStick.porDefecto(CONDUCIENDO, stickIzqX, pie - stickRadius, 1.5f);
+        rightStick.porDefecto(CONDUCIENDO, stickIzqX + unit * 2.94f, pie - stickRadius + unit * .33f, 1f);
         dpad.porDefecto(CONDUCIENDO, width - romboX, romboY, 1f);
 
         for (Control c : controls) cargar(c);
@@ -1312,7 +1317,7 @@ public final class TouchControllerView extends View {
         return editando ? dispEditada : dispJuego;
     }
 
-    /** Pedales, palanca e iconos: conduciendo y en las carreras de aceleracion. */
+    /** Pedales e iconos: conduciendo y en las carreras de aceleracion. */
     private boolean formasDeConducir() {
         return disposicion() != NORMAL;
     }
@@ -1428,6 +1433,7 @@ public final class TouchControllerView extends View {
         float xValue;
         float yValue;
         // El derecho: en las carreras de aceleracion, la palanca de cambios.
+        // Conduciendo es el stick de siempre, como antes de esa disposicion.
         boolean palanca;
         final RectF ranura = new RectF();
         Stick(String id, String text, float x, float y, float radius) {
@@ -1436,16 +1442,17 @@ public final class TouchControllerView extends View {
             colocar();
         }
         void colocar() { radius = baseRadius * escala; }
-        float alcance() { return palanca && formasDeConducir() ? radius * 1.3f : radius; }
+        boolean esPalanca() { return palanca && disposicion() == ACELERACION; }
+        float alcance() { return esPalanca() ? radius * 1.3f : radius; }
         boolean contains(float x, float y) {
-            if (palanca && formasDeConducir()) {
+            if (esPalanca()) {
                 return Math.abs(x - cx) <= radius * .8f && Math.abs(y - cy) <= radius * 1.3f;
             }
             float dx = x - cx, dy = y - cy;
             return dx * dx + dy * dy <= radius * radius * 1.55f;
         }
         void move(float x, float y) {
-            if (palanca && formasDeConducir()) {
+            if (esPalanca()) {
                 // Arriba sube marcha y abajo la baja: el juego cambia cuando el
                 // stick cruza su umbral, asi que va entero o en el centro. Tocar
                 // ya en un extremo tambien cambia.
@@ -1468,7 +1475,7 @@ public final class TouchControllerView extends View {
         }
         void release() { super.release(); xValue = 0; yValue = 0; }
         void draw(Canvas canvas) {
-            if (palanca && formasDeConducir()) {
+            if (esPalanca()) {
                 dibujarPalanca(canvas);
                 return;
             }

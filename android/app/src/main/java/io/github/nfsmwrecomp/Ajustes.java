@@ -294,6 +294,32 @@ final class Ajustes {
     String filtroImagen() { return p.getString("filtro_imagen", "apagado"); }
     void filtroImagen(String v) { p.edit().putString("filtro_imagen", v).apply(); }
 
+    /**
+     * La calidad de las sombras del motor nativo, en dos cvars suyos:
+     *   - rapida: un solo muestreo del mapa de sombras (nfsmw_nativo_pcf_barato)
+     *     y sin la sombra de la vegetacion (nfsmw_sombras_sin_vegetacion), como
+     *     venia;
+     *   - suave: el patron 3x3 de la Xbox 360, que difumina el borde. Cuesta GPU
+     *     en la escena, y ya no vale el atajo que evita copiar el mapa;
+     *   - xbox360: ademas, arboles, arbustos y vallas vuelven a dar sombra. Son
+     *     mas de la mitad de los dibujos del pase de sombras: cuesta sobre todo CPU.
+     */
+    static final String SOMBRAS_RAPIDA = "rapida";
+    static final String SOMBRAS_SUAVE = "suave";
+    static final String SOMBRAS_XBOX = "xbox360";
+
+    String calidadSombras() { return p.getString("calidad_sombras", SOMBRAS_RAPIDA); }
+    void calidadSombras(String v) { p.edit().putString("calidad_sombras", v).apply(); }
+
+    /**
+     * nfsmw_nativo_sombras_escala: el lado del mapa de sombras, en % de los 1600
+     * de la Xbox 360 (100, 150, 200 o 250). Ahi se dibujan tambien los coches, y
+     * con mas su sombra gana definicion. Por encima de 100 es parche nuestro
+     * (parche_nativo.py, seccion 11).
+     */
+    int sombrasEscala() { return p.getInt("sombras_escala", 100); }
+    void sombrasEscala(int v) { p.edit().putInt("sombras_escala", v).apply(); }
+
     /** nfsmw_sombras_cada: los mapas de sombras, 1 de cada N fotogramas. */
     int sombrasCada() { return p.getInt("sombras_cada", 1); }
     void sombrasCada(int v) { p.edit().putInt("sombras_cada", v).apply(); }

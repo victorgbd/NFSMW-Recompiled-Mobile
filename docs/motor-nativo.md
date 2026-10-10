@@ -192,6 +192,8 @@ ejecutable". En Android esa es `REX_APP_FOLDER`, que `MotorNativo.java` pone en
   | Límite de fps (nuevo, desplegable) | `nfsmw_limite_fps`: 30, 60, 90, 120 o `sin_limite` |
   | Suavizado | `nfsmw_antialiasing` = `fxaa` o `apagado`. MSAA no hay: la escena va en una pasada |
   | Filtro anisótropo | `nfsmw_nativo_anisotropico`: 0, 2, 4 o 16 |
+  | Calidad de las sombras (nuevo) | Rápida: `nfsmw_nativo_pcf_barato=true` y `nfsmw_sombras_sin_vegetacion=true`, como venía. Bordes suaves: el patrón 3x3 de la Xbox 360 (`pcf_barato=false`); cuesta GPU en la escena y vuelve la copia del mapa de 1600×1600 que ahorraba `nfsmw_nativo_sombra_minimo`. Como la Xbox 360: además `sin_vegetacion=false`, árboles, arbustos y vallas dan sombra (más de la mitad de los dibujos del pase: sobre todo CPU) |
+  | Resolución de las sombras (nuevo, desplegable) | `nfsmw_nativo_sombras_escala`: Nativa 100 (1600, la de la 360), Alta 150 (2400), Muy alta 200 (3200) o Ultra 250 (4000). Por encima de 100, con nuestra sección 11 de `parche_nativo.py` |
   | Sombras, distancia de sombras (nuevos) | `nfsmw_sombras_cada` (1 o 2) y `nfsmw_sombras_corte` (100, 150 o 200) |
   | Reflejos del coche, reflejo del asfalto (nuevos) | `nfsmw_cubemap_caras_max` (6, 2, 1) y `nfsmw_reflejo_carretera` |
   | Resplandor del cielo, filtro de color, desenfoque, filtro de imagen (nuevos) | `nfsmw_resplandor_cielo`, `nfsmw_tratamiento_visual`, `nfsmw_nativo_sin_desenfoque` y `nfsmw_posproceso` |
@@ -296,8 +298,9 @@ ejecutable". En Android esa es `REX_APP_FOLDER`, que `MotorNativo.java` pone en
 
   Hay tres disposiciones, cada una con la suya de fábrica: la normal (menús y cargas), la de
   conducir (el resto de carreras, la conducción libre y las persecuciones: lo de aceleración
-  pero con el stick izquierdo para girar y la cruceta, el stick en el reflejo de los pedales y
-  la cruceta en el de los botones en rombo) y la de las carreras de aceleración. El editor
+  pero con el stick izquierdo para girar, la cruceta y el stick derecho de siempre en vez de
+  la palanca; el stick izquierdo en el reflejo de los pedales y a 1,5 veces su tamaño, el
+  derecho a su derecha y algo más abajo, y la cruceta en el reflejo de los botones en rombo) y la de las carreras de aceleración. El editor
   elige cuál se edita con su botón CONTROLES; desde la partida abre la de la parte del juego
   en que se esté. La de fábrica de aceleración sale de una hecha a
   mano en el móvil (2688×1216), hecha simétrica: abajo, sobre la misma línea, los pedales a
@@ -398,6 +401,23 @@ Lo que añade `parche_nativo.py` encima:
   carrera en móviles lentos.
 - **Xclipse: BC4 y BC5 en la CPU** (sección 10). Su driver dice tener todas las BC, pero
   BC4-7 las convierte él mismo, a medias. Sin probar en un móvil con Xclipse.
+- **Mapa de sombras más grande que el de la 360** (sección 11). `nfsmw_nativo_sombras_escala`
+  solo bajaba de 100 %; ahora sube hasta 250 (4000×4000). Sirve el mismo camino que al
+  reducirlo: la textura resuelta sigue al tamaño del mapa, la copia es 1 a 1 y la escena la
+  muestrea con coordenadas normalizadas. Lo único que suponía un mapa más pequeño era el alto
+  útil de las restauraciones, que venía en píxeles del juego y dejaba sin copiar la parte de
+  abajo de un mapa más grande. En el RedMagic, a 200 % y 1080p: las copias pasan de ~1,1 a
+  ~2 ms de GPU por fotograma y la carrera sigue a 60 fps.
+- **Las estelas de luz del nitro, del largo de la 360 a cualquier fps** (sección 12).
+  `VehicleRenderConn::RenderFlares` (`sub_824E63D8` en la PAL) dibuja la estela entre las 3
+  últimas posiciones del coche, una por fotograma, así que a 60 fps salía la mitad de larga
+  que en la consola (a 30). El gancho pone en el anillo del juego las posiciones de hace 1/30 s
+  y 2/30 s, interpoladas de un historial propio; comprobado en el móvil a 30, 60 y más fps.
+  `nfsmw_estelas_nitro_30=false` lo quita. Un gancho nuevo en una función que el código ya
+  generado llamaba directa (`__imp__sub_X`, `tools/llamadas_directas.py`) no se ejecuta
+  hasta que esas llamadas vuelven a ser `sub_X`: al preparar desde cero ya sale bien (los
+  parches van antes del codegen), pero en un árbol ya generado hay que cambiarlas (aquí, 4
+  por edición).
 
 Probado en un Samsung A22 5G (Mali-G57 MC2, driver r32p1, Vulkan 1.1, 4 GB de RAM): menús a
 40-60 fps, carreras a 20-22 fps a 1024x576, limitado por la GPU (55-75 ms por fotograma a

@@ -25,6 +25,16 @@
     <string name="res_interna_576">1024×576 · faster</string>
     <string name="res_interna_720">1280×720 · Xbox 360</string>
     <string name="res_interna_1080">1920×1080 · sharper</string>
+    <string name="calidad_sombras">Shadow quality</string>
+    <string name="calidad_sombras_resumen">Soft edges blurs the shadow outline like the Xbox 360 (more GPU). Like the Xbox 360 also brings back the shadows of trees, bushes and fences (more CPU).</string>
+    <string name="sombras_rapida">Fast</string>
+    <string name="sombras_suave">Soft edges</string>
+    <string name="sombras_xbox360">Like the Xbox 360</string>
+    <string name="resolucion_sombras">Shadow resolution</string>
+    <string name="sombras_nativa">Native (Xbox 360)</string>
+    <string name="sombras_alta">High</string>
+    <string name="sombras_muy_alta">Very high</string>
+    <string name="sombras_ultra">Ultra</string>
     <string name="sombras">Shadows</string>
     <string name="sombras_resumen">How often the shadow maps are redrawn. Every 2 frames is cheaper and barely shows.</string>
     <string name="sombras_siempre">Every frame</string>

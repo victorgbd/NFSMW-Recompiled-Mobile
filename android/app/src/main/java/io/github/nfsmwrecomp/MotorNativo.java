@@ -194,6 +194,10 @@ final class MotorNativo {
         a.add("--nfsmw_tratamiento_visual=" + ajustes.filtroColor());
         a.add("--nfsmw_nativo_sin_desenfoque=" + !ajustes.desenfoque());
         a.add("--nfsmw_posproceso=" + ajustes.filtroImagen());
+        String sombras = ajustes.calidadSombras();
+        a.add("--nfsmw_nativo_pcf_barato=" + Ajustes.SOMBRAS_RAPIDA.equals(sombras));
+        a.add("--nfsmw_sombras_sin_vegetacion=" + !Ajustes.SOMBRAS_XBOX.equals(sombras));
+        a.add("--nfsmw_nativo_sombras_escala=" + ajustes.sombrasEscala());
         a.add("--nfsmw_sombras_cada=" + ajustes.sombrasCada());
         a.add("--nfsmw_sombras_corte=" + ajustes.sombrasCorte());
         a.add("--nfsmw_cubemap_caras_max=" + ajustes.reflejosCoche());
