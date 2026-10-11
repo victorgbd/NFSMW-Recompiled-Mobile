@@ -85,6 +85,7 @@ public class SetupActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         ajustes = new Ajustes(this);
+        ajustes.aplicarPerfilGpuDebil(this);
         avanzadoAbierto = savedInstanceState != null
                 && savedInstanceState.getBoolean(ESTADO_AVANZADO, false);
         setContentView(construir());
