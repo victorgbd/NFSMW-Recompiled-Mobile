@@ -59,6 +59,32 @@ final class Gpu {
         return Familia.OTRA;
     }
 
+    /**
+     * GPU que no llega a 30 fps estables con los ajustes por defecto: Adreno 5xx
+     * y de 620 para abajo (Snapdragon 650, 660, 680, 695, 720G...), Mali de
+     * la serie T y G hasta la G68 (G52, G57...), y PowerVR. Si no se sabe cual
+     * es, false.
+     */
+    static boolean debil(Context ctx) {
+        String n = nombre(ctx);
+        if (n.isEmpty()) {
+            return false;
+        }
+        java.util.regex.Matcher adreno = java.util.regex.Pattern
+                .compile("Adreno\\s*(\\d{3})").matcher(n);
+        if (adreno.find()) {
+            int modelo = Integer.parseInt(adreno.group(1));
+            return modelo <= 620;
+        }
+        java.util.regex.Matcher mali = java.util.regex.Pattern
+                .compile("Mali-?G(\\d+)").matcher(n);
+        if (mali.find()) {
+            return Integer.parseInt(mali.group(1)) <= 68;
+        }
+        String m = n.toLowerCase(java.util.Locale.ROOT);
+        return m.contains("mali-t") || m.contains("powervr");
+    }
+
     /** "Adreno (TM) 830" -> "Adreno 830". */
     private static String limpiar(String s) {
         if (s == null) {

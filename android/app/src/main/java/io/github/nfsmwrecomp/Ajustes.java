@@ -367,6 +367,33 @@ final class Ajustes {
     int anisotropico() { return p.getInt("anisotropico", 3); }
     void anisotropico(int v) { p.edit().putInt("anisotropico", v).apply(); }
 
+    /**
+     * La primera vez, en una GPU debil (Gpu.debil), unos ajustes que la hagan
+     * jugable: 1024x576, 30 fps (a ritmo fijo se siente mas fluido que
+     * saltando entre 20 y 30), sin suavizado, sombras cada 2 fotogramas y de
+     * cerca, un solo reflejo del coche y sin el del asfalto, y el bufer de la
+     * pantalla a 720p. Solo toca lo que el usuario no haya elegido nunca, y
+     * lo hace una vez: despues manda lo que ponga en la pantalla de inicio.
+     */
+    void aplicarPerfilGpuDebil(Context ctx) {
+        if (p.getBoolean("perfil_gpu_debil", false) || Gpu.nombre(ctx).isEmpty()) {
+            return;
+        }
+        SharedPreferences.Editor e = p.edit();
+        if (Gpu.debil(ctx)) {
+            if (!p.contains("resolucion_interna")) e.putString("resolucion_interna", "1024x576");
+            if (!p.contains("limite_fps")) e.putInt("limite_fps", 30);
+            if (!p.contains("antialiasing")) e.putString("antialiasing", AA_NO);
+            if (!p.contains("resolucion")) e.putString("resolucion", RES_720P);
+            if (!p.contains("anisotropico")) e.putInt("anisotropico", 2);
+            if (!p.contains("sombras_cada")) e.putInt("sombras_cada", 2);
+            if (!p.contains("sombras_corte")) e.putInt("sombras_corte", 200);
+            if (!p.contains("reflejos_coche")) e.putInt("reflejos_coche", 1);
+            if (!p.contains("reflejo_asfalto")) e.putBoolean("reflejo_asfalto", false);
+        }
+        e.putBoolean("perfil_gpu_debil", true).apply();
+    }
+
     static File carpetaDatos(Context ctx) {
         File f = new File(ctx.getExternalFilesDir(null), "datos");
         //noinspection ResultOfMethodCallIgnored

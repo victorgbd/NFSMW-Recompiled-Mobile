@@ -161,24 +161,51 @@ std::vector<Regla> LeerReglas(const std::string& texto) {
   return reglas;
 }
 
+// Capacidad relativa de un nucleo: cpu_capacity si el kernel la da y, si no
+// (kernels 3.18 / 4.4 de Snapdragon 650, 660...), su frecuencia maxima en MHz.
+// 0 = no se sabe (nucleo apagado).
+int CapacidadNucleo(int c) {
+  char ruta[96];
+  char buf[32];
+  std::snprintf(ruta, sizeof(ruta), "/sys/devices/system/cpu/cpu%d/cpu_capacity", c);
+  if (LeerFichero(ruta, buf, sizeof(buf))) {
+    return std::atoi(buf);
+  }
+  std::snprintf(ruta, sizeof(ruta),
+                "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", c);
+  if (LeerFichero(ruta, buf, sizeof(buf))) {
+    return std::atoi(buf) / 1000;
+  }
+  return 0;
+}
+
+bool ExisteNucleo(int c) {
+  char ruta[64];
+  std::snprintf(ruta, sizeof(ruta), "/sys/devices/system/cpu/cpu%d", c);
+  return access(ruta, F_OK) == 0;
+}
+
 // Los prime son los de mas capacidad. Si todos valen lo mismo no hay nada que
 // repartir y no se toca nada.
+//
+// Con pocos nucleos grandes y muchos pequenos (2+6 del Snapdragon 695, 2+4 del
+// 650 y el 660), mandar TODO lo demas a los pequenos es peor que no tocar: el
+// audio, la compilacion de shaders y los hilos del driver quedarian en nucleos
+// que rinden menos de la mitad. Ahi solo se fijan los hilos criticos.
 std::vector<Regla> ReglasAuto() {
   int capacidad[kMaxNucleos];
   int mayor = 0;
-  int menor = 0;
   int nucleos = 0;
-  for (int c = 0; c < kMaxNucleos; ++c) {
-    char ruta[96];
-    char buf[32];
-    std::snprintf(ruta, sizeof(ruta), "/sys/devices/system/cpu/cpu%d/cpu_capacity", c);
-    if (!LeerFichero(ruta, buf, sizeof(buf))) {
-      break;
-    }
-    capacidad[c] = std::atoi(buf);
-    mayor = nucleos == 0 ? capacidad[c] : std::max(mayor, capacidad[c]);
-    menor = nucleos == 0 ? capacidad[c] : std::min(menor, capacidad[c]);
+  for (int c = 0; c < kMaxNucleos && ExisteNucleo(c); ++c) {
+    capacidad[c] = CapacidadNucleo(c);
+    mayor = std::max(mayor, capacidad[c]);
     ++nucleos;
+  }
+  int menor = mayor;
+  for (int c = 0; c < nucleos; ++c) {
+    if (capacidad[c] > 0) {
+      menor = std::min(menor, capacidad[c]);
+    }
   }
   if (nucleos == 0 || mayor == menor) {
     REXLOG_INFO("[afinidad] auto: todos los nucleos valen lo mismo, no se toca nada");
@@ -189,15 +216,20 @@ std::vector<Regla> ReglasAuto() {
   cpu_set_t resto;
   CPU_ZERO(&prime);
   CPU_ZERO(&resto);
+  int numPrime = 0;
+  int mejorResto = 0;
   // Con if y no con ?: dentro de CPU_SET: es una macro que hace (set)->__bits,
   // y el ?: sin parentesis se asociaria mal.
   for (int c = 0; c < nucleos; ++c) {
     if (capacidad[c] == mayor) {
       CPU_SET(c, &prime);
+      ++numPrime;
     } else {
       CPU_SET(c, &resto);
+      mejorResto = std::max(mejorResto, capacidad[c]);
     }
   }
+  const bool pocosGrandes = numPrime <= 2 && mejorResto * 10 < mayor * 6;
 
   std::vector<Regla> reglas;
   // "GPU Commands" es el procesador de comandos del motor de Xenos; "GPU anillo"
@@ -209,6 +241,12 @@ std::vector<Regla> ReglasAuto() {
     r.nucleos = prime;
     r.texto = std::string(nombre) + "=" + TextoNucleos(prime);
     reglas.push_back(r);
+  }
+  if (pocosGrandes) {
+    REXLOG_INFO("[afinidad] auto: {} nucleos grandes y el resto pequenos; solo se fijan "
+                "los hilos del anillo y principal",
+                numPrime);
+    return reglas;
   }
   Regla comodin;
   comodin.nucleos = resto;
