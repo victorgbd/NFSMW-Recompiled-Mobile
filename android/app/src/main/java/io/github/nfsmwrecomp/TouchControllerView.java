@@ -266,6 +266,32 @@ public final class TouchControllerView extends View {
     private Flecha carrilDer;
     private Trigger leftTrigger;
     private Trigger rightTrigger;
+    // Los botones A y B, para que un gesto los pulse y se vean pulsados.
+    private ButtonControl botonA;
+    private ButtonControl botonB;
+
+    // --- Bloqueo del acelerador (crucero) y gestos (nitro y freno de mano).
+    // Mantener el pedal BLOQUEO_MS lo deja bloqueado: el candado del pedal se
+    // cierra, el pedal sigue pisado sin dedo, y se suelta al tocar el candado,
+    // al frenar (mientras se frena) o al dejar de conducir (menus, pausa,
+    // editor, controles ocultos, app en segundo plano).
+    private static final long BLOQUEO_MS = 600;
+    // Lo que hay que arrastrar, en vertical y en una zona vacia, para que
+    // cuente como gesto.
+    private static final float GESTO_RECORRIDO_DP = 48f;
+    private boolean aceleradorBloqueado;
+    // Arrastrar hacia arriba deja la nitro puesta; hacia abajo, el freno de
+    // mano. Los dos duran mientras el dedo siga en la pantalla.
+    private boolean gestoNitro;
+    private boolean gestoFrenoMano;
+    private int dedoGesto = -1;
+    private float gestoX;
+    private float gestoY;
+    private boolean gestoDecidido;
+    // Un dedo a menos de esto (dp) del borde de un control no hace nada: ni
+    // gira ni empieza un gesto. Es el margen que hay alrededor de cada boton,
+    // para que rozarlo al lado no mueva el coche.
+    private static final float BUFFER_CONTROLES_DP = 8f;
 
     // --- Segun la parte del juego.
     private static final long CONTEXTO_MS = 250;
@@ -279,6 +305,17 @@ public final class TouchControllerView extends View {
     private int dispJuego = NORMAL;
     // El juego en pausa: no se gira inclinando el movil.
     private boolean enPausa;
+
+    // Mantener el pedal un momento lo bloquea: sigue pisado sin dedo. Solo
+    // cuenta si sigue el dedo en el pedal y se sigue conduciendo.
+    private final Runnable bloquearAcelerador = () -> {
+        if (!enPausa && !editando && controlsVisible && formasDeConducir()
+                && !aceleradorBloqueado && rightTrigger != null && rightTrigger.inUse) {
+            aceleradorBloqueado = true;
+            sendState();
+            invalidate();
+        }
+    };
 
     // --- Girar inclinando el movil.
     private final boolean inclinar;
@@ -468,6 +505,9 @@ public final class TouchControllerView extends View {
                 dispJuego = ahora;
                 // Todo suelto: un dedo que estaba en L3, que ahora no esta, o
                 // en el stick, que ahora es la palanca, no se queda pulsado.
+                // En los menus (fuera del mundo) tampoco queda el pedal
+                // bloqueado: ahi no se ve, y el juego ya no es el mismo.
+                if (ahora == NORMAL) soltarCruceroYGestos();
                 clearInput();
                 // Mientras se edita, la disposicion la elige el editor.
                 if (!editando) usarDisposicion(dispJuego);
@@ -628,14 +668,31 @@ public final class TouchControllerView extends View {
         cancelarMenu();
         for (Control control : controls) control.release();
         pointers.clear();
+        soltarCruceroYGestos();
         sendState();
         invalidate();
+    }
+
+    /**
+     * Suelta el crucero del acelerador y los gestos: al cambiar de parte del
+     * juego (menus, cargas), al cancelar el toque o al abrir el editor no se
+     * quedan puestos. La pausa NO los suelta: al volver a jugar sigue el
+     * pedal bloqueado, sin tener que volver a pisarlo.
+     */
+    private void soltarCruceroYGestos() {
+        removeCallbacks(bloquearAcelerador);
+        aceleradorBloqueado = false;
+        gestoNitro = false;
+        gestoFrenoMano = false;
+        dedoGesto = -1;
+        gestoDecidido = false;
     }
 
     public void disconnect() {
         cancelarMenu();
         for (Control control : controls) control.release();
         pointers.clear();
+        soltarCruceroYGestos();
         TouchControllerBridge.trySetState(-1, 0, 0, 0, 0, 0, 0);
     }
 
@@ -671,6 +728,8 @@ public final class TouchControllerView extends View {
         super.onWindowVisibilityChanged(visibility);
         removeCallbacks(mirarContexto);
         if (enPartida && visibility == VISIBLE) post(mirarContexto);
+        // De fondo (o en segundo plano) no se queda nada pisado.
+        else soltarCruceroYGestos();
         escucharInclinacion(enPartida && inclinar && visibility == VISIBLE);
     }
 
@@ -699,6 +758,7 @@ public final class TouchControllerView extends View {
         }
         removeCallbacks(ocultarToggle);
         removeCallbacks(mirarContexto);
+        removeCallbacks(bloquearAcelerador);
         escucharInclinacion(false);
         disconnect();
         super.onDetachedFromWindow();
@@ -753,6 +813,9 @@ public final class TouchControllerView extends View {
         float faceY = height * .68f;
         ButtonControl a = new ButtonControl("a", "A", faceX, faceY + unit * .68f, buttonRadius, A);
         ButtonControl b = new ButtonControl("b", "B", faceX + unit * .68f, faceY, buttonRadius, B);
+        // Los gestos los pulsan: hay que poder marcarlos.
+        botonA = a;
+        botonB = b;
         ButtonControl x = new ButtonControl("x", "X", faceX - unit * .68f, faceY, buttonRadius, X);
         ButtonControl y = new ButtonControl("y", "Y", faceX, faceY - unit * .68f, buttonRadius, Y);
         controls.add(a);
@@ -1072,7 +1135,28 @@ public final class TouchControllerView extends View {
         drawLabel(canvas, texto, x, y, tamano, 1f);
     }
 
-    @Override
+    /**
+     * Si el dedo esta a menos de BUFFER_CONTROLES_DP del borde de un control
+     * (o de OCULTAR/TACTIL y el engranaje), la zona reservada. Se mira con
+     * ocho puntos alrededor del dedo, para no tener que repetir la forma de
+     * cada control.
+     */
+    private boolean rozaControl(float x, float y) {
+        float m = dp(BUFFER_CONTROLES_DP);
+        float[] desplazamientos = {m, 0, -m, 0, 0, m, 0, -m,
+                                   m * .7f, m * .7f, -m * .7f, m * .7f,
+                                   m * .7f, -m * .7f, -m * .7f, -m * .7f};
+        for (int i = 0; i < desplazamientos.length; i += 2) {
+            float px = x + desplazamientos[i];
+            float py = y + desplazamientos[i + 1];
+            if (toggleVisible && (toggle.contains(px, py) || engranaje.contains(px, py))) return true;
+            for (Control c : controls) {
+                if (!c.oculto() && c.contains(px, py)) return true;
+            }
+        }
+        return false;
+    }
+
     public boolean onTouchEvent(MotionEvent event) {
         if (editando) return tocarEditor(event);
 
@@ -1107,6 +1191,13 @@ public final class TouchControllerView extends View {
             }
             if (!controlsVisible) return false;
             if (conDedo()) return tocarMenu(event);
+            // El candado del acelerador: se toca aparte y no pisa el pedal.
+            if (rightTrigger != null && rightTrigger.tocaCandado(x, y)) {
+                aceleradorBloqueado = !aceleradorBloqueado;
+                sendState();
+                invalidate();
+                return true;
+            }
             for (int i = controls.size() - 1; i >= 0; --i) {
                 Control control = controls.get(i);
                 if (!control.inUse && !control.oculto() && control.contains(x, y)) {
@@ -1117,10 +1208,60 @@ public final class TouchControllerView extends View {
                     return true;
                 }
             }
+            // El margen de los controles: un roce al lado de un boton no gira
+            // ni empieza un gesto.
+            if (rozaControl(x, y)) return true;
+            // La zona del volante: la mitad izquierda de la pantalla. Como en
+            // los juegos de movil, el stick se pone donde caiga el dedo y sigue
+            // el giro mientras siga puesto (lo demas ya lo ha cogido cada
+            // control, asi que aqui solo queda el hueco).
+            if (formasDeConducir() && leftStick != null && !leftStick.inUse
+                    && !leftStick.oculto() && x < lastWidth * .5f) {
+                pointers.put(pointerId, leftStick);
+                leftStick.agarrarFlotante(x, y);
+                sendState();
+                invalidate();
+                return true;
+            }
+            // Nada debajo: puede ser un gesto (nitro arriba, freno de mano
+            // abajo). Se decide en cuanto el dedo se mueve lo suficiente. La
+            // mitad derecha, para no pisar la zona del volante.
+            if (formasDeConducir() && x > lastWidth * .5f) {
+                dedoGesto = pointerId;
+                gestoX = x;
+                gestoY = y;
+                gestoDecidido = false;
+                return true;
+            }
             return false;
         }
 
         if (action == MotionEvent.ACTION_MOVE) {
+            // El gesto (nitro arriba, freno de mano abajo): se decide con el
+            // primer movimiento, y dura mientras el dedo siga puesto.
+            if (dedoGesto != -1) {
+                int iGesto = event.findPointerIndex(dedoGesto);
+                if (iGesto >= 0) {
+                    if (!gestoDecidido) {
+                        float dxGesto = event.getX(iGesto) - gestoX;
+                        float dyGesto = event.getY(iGesto) - gestoY;
+                        float recorrido = dp(GESTO_RECORRIDO_DP);
+                        if (Math.abs(dyGesto) >= recorrido
+                                && Math.abs(dyGesto) > Math.abs(dxGesto)) {
+                            gestoDecidido = true;
+                            if (dyGesto < 0) gestoNitro = true;
+                            else gestoFrenoMano = true;
+                            sendState();
+                            invalidate();
+                        } else if (Math.abs(dxGesto) >= recorrido * 2f) {
+                            // Un arrastre de lado no es un gesto.
+                            dedoGesto = -1;
+                        }
+                    }
+                } else {
+                    dedoGesto = -1;
+                }
+            }
             boolean handled = false;
             for (int i = 0; i < event.getPointerCount(); ++i) {
                 Control control = pointers.get(event.getPointerId(i));
@@ -1137,6 +1278,16 @@ public final class TouchControllerView extends View {
         }
 
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
+            // El dedo del gesto: al levantarlo se suelta la nitro o el freno.
+            if (pointerId == dedoGesto) {
+                dedoGesto = -1;
+                gestoDecidido = false;
+                gestoNitro = false;
+                gestoFrenoMano = false;
+                sendState();
+                invalidate();
+                return true;
+            }
             Control control = pointers.get(pointerId);
             if (control == null) return false;
             control.release();
@@ -1691,6 +1842,8 @@ public final class TouchControllerView extends View {
 
     private void setControlsVisible(boolean visible) {
         controlsVisible = visible;
+        // Con los controles fuera no queda nada pisado.
+        if (!visible) soltarCruceroYGestos();
         // Con mando no se guarda: la preferencia es la de jugar sin el.
         if (!mandoFisico) preferences.edit().putBoolean(PREF_VISIBLE, visible).apply();
         rehacer();
@@ -1714,6 +1867,10 @@ public final class TouchControllerView extends View {
             TouchControllerBridge.trySetState(-1, 0, 0, 0, 0, 0, 0);
             return;
         }
+        // Los gestos pulsan A (freno de mano, hacia abajo) y B (nitro, hacia
+        // arriba) y los dejan con el color de pulsado, que se ve en pantalla.
+        if (botonA != null) botonA.forzado = gestoFrenoMano;
+        if (botonB != null) botonB.forzado = gestoNitro;
         int pisado = pulso | mantenido;
         int buttons = pisado & ~(PULSO_LT | PULSO_RT);
         for (Control control : controls) buttons |= control.buttons();
@@ -1728,6 +1885,11 @@ public final class TouchControllerView extends View {
             lx = giroInclinado;
             ly = 0;
         }
+        // El acelerador: el pedal, o el crucero (el pedal bloqueado sin dedo). El
+        // crucero no cuenta al frenar (los dos gatillos a la vez no frenan ni
+        // dan marcha atras) ni en pausa; en los menus no existe.
+        boolean crucero = aceleradorBloqueado && formasDeConducir() && !enPausa
+                && !(leftTrigger != null && leftTrigger.inUse);
         TouchControllerBridge.trySetState(
             buttons,
             lx,
@@ -1735,7 +1897,7 @@ public final class TouchControllerView extends View {
             stickArrastreX != 0 || stickArrastreY != 0 ? stickArrastreX : rightStick == null ? 0 : rightStick.xValue,
             stickArrastreX != 0 || stickArrastreY != 0 ? stickArrastreY : rightStick == null ? 0 : rightStick.yValue,
             (leftTrigger != null && leftTrigger.inUse) || (pisado & PULSO_LT) != 0 ? 1 : 0,
-            (rightTrigger != null && rightTrigger.inUse) || (pisado & PULSO_RT) != 0 ? 1 : 0);
+            (rightTrigger != null && (rightTrigger.inUse || crucero)) || (pisado & PULSO_RT) != 0 ? 1 : 0);
     }
 
     /**
@@ -1801,6 +1963,8 @@ public final class TouchControllerView extends View {
         // Movido o cambiado de tamano en el editor: se guarda.
         boolean personalizado;
         boolean inUse;
+        // Lo pulsa un gesto (nitro o freno de mano), no un dedo en el boton.
+        boolean forzado;
         // Las dos disposiciones, NORMAL y ACELERACION: lo guardado con el editor
         // (centro, escala) y si lo hay; sin eso, la de fabrica.
         final float[] px = new float[3];
@@ -1890,9 +2054,9 @@ public final class TouchControllerView extends View {
             float dx = px - cx, dy = py - cy;
             return dx * dx + dy * dy <= radius * radius * 1.35f;
         }
-        int buttons() { return inUse ? mask : 0; }
+        int buttons() { return (inUse || forzado) ? mask : 0; }
         void draw(Canvas canvas) {
-            drawCircle(canvas, cx, cy, radius, inUse);
+            drawCircle(canvas, cx, cy, radius, inUse || forzado);
             drawLabel(canvas, text, cx, cy, radius * .72f, opacidad);
         }
     }
@@ -1942,6 +2106,8 @@ public final class TouchControllerView extends View {
     private final class Trigger extends RectButton {
         final boolean freno;
         final RectF pedal = new RectF();
+        // El candado del acelerador (bloqueo del pedal), en su esquina.
+        final RectF zonaCandado = new RectF();
         Trigger(String id, String text, float x, float y, float width, float height, boolean freno) {
             super(id, text, x, y, width, height, 0);
             this.freno = freno;
@@ -1959,10 +2125,31 @@ public final class TouchControllerView extends View {
             float x = limitar(cx, ancho * .5f + dp(4), lastWidth - ancho * .5f - dp(4));
             float y = limitar(cy, alto * .5f + dp(4), lastHeight - alto * .5f - dp(4));
             pedal.set(x - ancho * .5f, y - alto * .5f, x + ancho * .5f, y + alto * .5f);
+            // El candado: la esquina de arriba a la izquierda, y de su tamano.
+            float lado = limitar(pedal.width() * .42f, dp(20), pedal.width());
+            zonaCandado.set(pedal.left, pedal.top, pedal.left + lado, pedal.top + lado);
         }
         @Override
         boolean contains(float x, float y) {
             return formasDeConducir() ? pedal.contains(x, y) : super.contains(x, y);
+        }
+        /** El dedo ha caido en el candado del acelerador. */
+        boolean tocaCandado(float x, float y) {
+            return !freno && !editando && formasDeConducir() && zonaCandado.contains(x, y);
+        }
+        @Override
+        void press(float x, float y) {
+            super.press(x, y);
+            // Mantenerlo un momento lo bloquea.
+            if (!freno && formasDeConducir()) {
+                removeCallbacks(bloquearAcelerador);
+                postDelayed(bloquearAcelerador, BLOQUEO_MS);
+            }
+        }
+        @Override
+        void release() {
+            super.release();
+            if (!freno) removeCallbacks(bloquearAcelerador);
         }
         @Override
         float alcance() {
@@ -1971,7 +2158,8 @@ public final class TouchControllerView extends View {
         @Override
         void draw(Canvas canvas) {
             if (formasDeConducir()) {
-                dibujarPedal(canvas, pedal, freno, inUse);
+                dibujarPedal(canvas, pedal, freno, inUse || (!freno && aceleradorBloqueado));
+                if (!freno && !editando) dibujarCandado(canvas, zonaCandado, aceleradorBloqueado);
             } else {
                 super.draw(canvas);
             }
@@ -1988,6 +2176,13 @@ public final class TouchControllerView extends View {
         // Conduciendo es el stick de siempre, como antes de esa disposicion.
         boolean palanca;
         final RectF ranura = new RectF();
+        // El izquierdo, flotante (como en los juegos de movil): el centro se
+        // pone donde caiga el dedo, y si el dedo se aleja mas del radio el
+        // centro se va con el. Asi, girando, el volante nunca se queda clavado
+        // en un lado: mientras el dedo siga puesto, se sigue girando.
+        float origenX;
+        float origenY;
+        boolean flotante;
         Stick(String id, String text, float x, float y, float radius) {
             super(id, x, y);
             this.text = text; this.baseRadius = radius;
@@ -1996,6 +2191,15 @@ public final class TouchControllerView extends View {
         void colocar() { radius = baseRadius * escala; }
         boolean esPalanca() { return palanca && disposicion() == ACELERACION; }
         float alcance() { return esPalanca() ? radius * 1.3f : radius; }
+        /** El dedo ha caido en la zona del volante: el stick se pone ahi. */
+        void agarrarFlotante(float x, float y) {
+            origenX = x;
+            origenY = y;
+            flotante = true;
+            inUse = true;
+        }
+        float centroX() { return flotante ? origenX : cx; }
+        float centroY() { return flotante ? origenY : cy; }
         boolean contains(float x, float y) {
             if (esPalanca()) {
                 return Math.abs(x - cx) <= radius * .8f && Math.abs(y - cy) <= radius * 1.3f;
@@ -2013,8 +2217,21 @@ public final class TouchControllerView extends View {
                 yValue = dy < -.3f ? -1 : dy > .3f ? 1 : 0;
                 return;
             }
-            float dx = (x - cx) / radius;
-            float dy = (y - cy) / radius;
+            // Flotante: si el dedo se pasa del radio, el centro se acerca hasta
+            // dejarlo justo en el borde. El volante sigue teniendo recorrido
+            // hacia el otro lado sin levantar el dedo.
+            if (flotante) {
+                float dxOrigen = x - origenX;
+                float dyOrigen = y - origenY;
+                float distancia = (float) Math.sqrt(dxOrigen * dxOrigen + dyOrigen * dyOrigen);
+                if (distancia > radius) {
+                    float sobra = (distancia - radius) / distancia;
+                    origenX += dxOrigen * sobra;
+                    origenY += dyOrigen * sobra;
+                }
+            }
+            float dx = (x - centroX()) / radius;
+            float dy = (y - centroY()) / radius;
             float length = (float) Math.sqrt(dx * dx + dy * dy);
             if (length > 1) { dx /= length; dy /= length; }
             float deadzone = .08f;
@@ -2025,15 +2242,17 @@ public final class TouchControllerView extends View {
             xValue = Math.abs(dx) < deadzone ? 0 : dx;
             yValue = Math.abs(dy) < deadzone ? 0 : dy;
         }
-        void release() { super.release(); xValue = 0; yValue = 0; }
+        void release() { super.release(); xValue = 0; yValue = 0; flotante = false; }
         void draw(Canvas canvas) {
             if (esPalanca()) {
                 dibujarPalanca(canvas);
                 return;
             }
-            drawCircle(canvas, cx, cy, radius, false);
-            float knobX = cx + xValue * radius * .58f;
-            float knobY = cy + yValue * radius * .58f;
+            float baseX = centroX();
+            float baseY = centroY();
+            drawCircle(canvas, baseX, baseY, radius, false);
+            float knobX = baseX + xValue * radius * .58f;
+            float knobY = baseY + yValue * radius * .58f;
             drawCircle(canvas, knobX, knobY, radius * .43f, inUse);
             drawLabel(canvas, text, knobX, knobY, radius * .34f, opacidad);
         }
@@ -2153,6 +2372,31 @@ public final class TouchControllerView extends View {
             float y = pisado.top + paso * i;
             canvas.drawLine(pisado.left + margen, y, pisado.right - margen, y, stroke);
         }
+    }
+
+    /**
+     * El candado del acelerador, en su esquina: cerrado, el pedal esta
+     * bloqueado y va pisado sin dedo; abierto, no. Se toca para cambiar.
+     */
+    private void dibujarCandado(Canvas canvas, RectF caja, boolean cerrado) {
+        float r = caja.width() * .3f;
+        fill.setColor(conOpacidad(cerrado ? PULSADO : FONDO_BOTON));
+        stroke.setColor(conOpacidad(BORDE));
+        canvas.drawRoundRect(caja, r, r, fill);
+        canvas.drawRoundRect(caja, r, r, stroke);
+        // El cuerpo del candado.
+        float ancho = caja.width() * .46f;
+        float alto = caja.height() * .32f;
+        float x = caja.centerX();
+        float y = caja.centerY() + caja.height() * .14f;
+        trazo.set(x - ancho * .5f, y - alto * .5f, x + ancho * .5f, y + alto * .5f);
+        canvas.drawRoundRect(trazo, alto * .3f, alto * .3f, stroke);
+        // El arco: cerrado, encima del cuerpo; abierto, corrido a un lado.
+        float radio = ancho * .32f;
+        float desvio = cerrado ? 0f : ancho * .40f;
+        trazo.set(x - radio + desvio, y - alto * .5f - radio * 1.7f,
+                  x + radio + desvio, y - alto * .5f + radio * .3f);
+        canvas.drawArc(trazo, 180, cerrado ? 180 : 130, false, stroke);
     }
 
     /** Una camara de fotos: el visor, el cuerpo y el objetivo. */
