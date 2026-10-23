@@ -39,7 +39,8 @@ versionan: los deja este script, y el APK se compila contra todo ello.
      este proyecto, que ya vienen aplicados (dicen que cada bloque ya estaba;
      siguen sirviendo para el SDK del motor de Xenos): tools/parche_iso.py (leer la ISO sin copiarla),
      tools/parche_gamertag.py, tools/parche_turnip.py (drivers propios),
-     tools/parche_pausa.py (soltar la superficie al minimizar) y
+     tools/parche_pausa.py (soltar la superficie al minimizar),
+     tools/parche_memcpy.py (el memcpy nativo con solape, como el del juego) y
      tools/android/parche_nativo.py (abrir la URI, la sonda y el audio).
      Tambien clona SPIRV-Cross en su thirdparty, para el backend de OpenGL ES.
   4. Saca del juego lo que hace falta: default.xex y NFS/ (los videos no).
@@ -250,6 +251,7 @@ def parches(arbol):
     correr(sys.executable, RAIZ / "tools" / "parche_gamertag.py", env=entorno, que="parche_gamertag.py")
     correr(sys.executable, RAIZ / "tools" / "parche_turnip.py", env=entorno, que="parche_turnip.py")
     correr(sys.executable, RAIZ / "tools" / "parche_pausa.py", env=entorno, que="parche_pausa.py")
+    correr(sys.executable, RAIZ / "tools" / "parche_memcpy.py", env=entorno, que="parche_memcpy.py")
     correr(sys.executable, RAIZ / "tools" / "android" / "parche_nativo.py",
            "--arbol", arbol, que="parche_nativo.py")
 

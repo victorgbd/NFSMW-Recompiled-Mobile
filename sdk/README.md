@@ -72,6 +72,7 @@ git apply --unidiff-zero nfsmw-parches.diff
 | `parche_camino_edram` | Escribir en el log qué camino de EDRAM se usa |
 | `parche_gamertag` | Cvar `user_gamertag`, el gamertag del perfil emulado |
 | `parche_cache_pipelines` | Cache de pipelines del driver en disco, y el precreado de pipelines arreglado en Android |
+| `parche_memcpy` | El memcpy nativo (`[rexcrt]`) copia como el del juego aunque el origen y el destino se solapen |
 
 Quedan fuera los dos que solo tocan Direct3D 12, que en Android no se compila:
 `parche_presentador` y `parche_gpu_fallback`.

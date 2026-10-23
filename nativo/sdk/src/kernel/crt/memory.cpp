@@ -7,6 +7,7 @@
  * @copyright   Copyright (c) 2026 Tom Clay <tomc@tctechstuff.com>
  * @license     BSD 3-Clause License
  */
+#include <cstdint>
 #include <cstring>
 
 #include <rex/hook.h>
@@ -17,8 +18,42 @@ namespace rex::kernel::crt {
 // Standard memory operations
 // ---------------------------------------------------------------------------
 
+// PARCHE LOCAL - memcpy con solape (tools/parche_memcpy.py).
+// El memcpy del CRT de la Xbox 360 copia hacia delante, y el juego cuenta con ello con rangos que se
+// solapan: NFSMW quita un elemento de un array copiando la cola un hueco hacia atras (destino < origen).
+// std::memcpy no define ese caso, y el de bionic en arm64 duplica elementos de verdad. El mismo resultado
+// que el del juego en todos los casos:
+//  - sin solape: std::memcpy;
+//  - destino <= origen: copiar hacia delante lee cada byte antes de pisarlo, que es lo que da std::memmove;
+//  - destino > origen con solape: el algoritmo del juego (bytes hasta alinear el destino, palabras de 4
+//    bytes leidas antes de escribirlas y los bytes que queden), con volatile para que el compilador no lo
+//    cambie por un memmove.
 static void* native_memcpy(void* dst, const void* src, size_t n) {
-  return std::memcpy(dst, src, n);
+  auto* d = static_cast<uint8_t*>(dst);
+  const auto* s = static_cast<const uint8_t*>(src);
+  if (d + n <= s || s + n <= d) {
+    return std::memcpy(dst, src, n);
+  }
+  if (d <= s) {
+    return std::memmove(dst, src, n);
+  }
+  volatile uint8_t* vd = d;
+  const volatile uint8_t* vs = s;
+  while (n && (reinterpret_cast<uintptr_t>(vd) & 3)) {
+    *vd++ = *vs++;
+    --n;
+  }
+  for (; n >= 4; n -= 4, vd += 4, vs += 4) {
+    const uint8_t b0 = vs[0], b1 = vs[1], b2 = vs[2], b3 = vs[3];
+    vd[0] = b0;
+    vd[1] = b1;
+    vd[2] = b2;
+    vd[3] = b3;
+  }
+  while (n--) {
+    *vd++ = *vs++;
+  }
+  return dst;
 }
 
 static void* native_memmove(void* dst, const void* src, size_t n) {

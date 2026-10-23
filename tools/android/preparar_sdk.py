@@ -106,6 +106,9 @@ PARCHES_PROYECTO = [
     "parche_gamertag",
     # Cache de pipelines del driver en disco (menos tirones y arranque mas rapido).
     "parche_cache_pipelines",
+    # El memcpy nativo con rangos que se solapan, como el del juego: con el de
+    # bionic el juego se cerraba en la primera cinematica de la carrera.
+    "parche_memcpy",
 ]
 
 
