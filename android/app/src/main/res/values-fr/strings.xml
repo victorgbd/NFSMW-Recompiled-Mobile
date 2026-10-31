@@ -178,6 +178,10 @@
     <string name="tactil_ocultar">MASQUER</string>
     <string name="tactil_mostrar">TACTILE</string>
     <string name="tactil_mando">MANETTE</string>
+    <!-- El boton del menu principal que cierra el juego y vuelve a la pantalla de inicio,
+         y lo que pone al tocarlo una vez (se toca otra para salir). -->
+    <string name="salir_juego">Quitter</string>
+    <string name="salir_juego_seguro">Vraiment ?</string>
     <string name="tactil_gestos">DOIGT</string>
     <string name="seccion_perfil">Profil Xbox 360</string>
     <string name="gamertag_resumen">Le nom que le jeu voit pour votre profil. Vos sauvegardes sont conservées si vous le changez : elles dépendent de l\'ID du profil, pas du nom.</string>

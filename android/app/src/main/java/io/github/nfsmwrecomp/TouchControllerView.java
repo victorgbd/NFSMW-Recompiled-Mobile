@@ -296,12 +296,14 @@ public final class TouchControllerView extends View {
 
     // --- Girar con las flechas de carril al conducir (Ajustes.modoGiro).
     private final boolean flechasAlConducir;
-    // No del todo de golpe: a tope y a velocidad, el coche derrapa de morro y
-    // frena (se notaba al girar con las flechas, no con el stick, que casi
-    // nunca va a tope). Al pisar, un poco; mantenida, a tope en GIRO_FLECHA_MS;
-    // al soltar, recto. Como el teclado en los juegos de carreras.
-    private static final float GIRO_FLECHA_INICIAL = .5f;
-    private static final long GIRO_FLECHA_MS = 300;
+    // Al pisar, GIRO_FLECHA_INICIAL; mantenida, a tope en GIRO_FLECHA_MS; al
+    // soltar, recto. Ahora a tope de golpe, como el teclado del juego en PC: alli
+    // la tecla llega al coche como 1.0 y lo gradual lo pone la fisica, que es la
+    // misma que en el 360 (SuspensionRacer::DoHumanSteering, mismas tablas en
+    // speed.exe y en el XEX). Antes, 50 % y 300 ms: a tope y a velocidad el coche
+    // derrapa de morro, pero eso tambien pasa en PC.
+    private static final float GIRO_FLECHA_INICIAL = 1f;
+    private static final long GIRO_FLECHA_MS = 250;
     private float giroFlechas;
     private long pasoFlechas;
     private final Runnable rampaFlechas = new Runnable() {
@@ -467,6 +469,51 @@ public final class TouchControllerView extends View {
         sendState();
         postDelayed(siguientePulso, ENTRE_PULSOS_MS);
     };
+    // --- Salir del juego desde el menu principal (nativo_android.cpp, seccion 11): una
+    // indicacion mas, "Salir", con el estilo de las del juego. Se ve siempre; se toca solo sin
+    // el mando tactil a la vista (con el, su BACK hace lo mismo, como el del mando fisico).
+    // Toca (o BACK) una vez y pide confirmar; otra antes de SALIR_CONFIRMAR_MS, sale.
+    private final float[] menuPrincipal = new float[4];
+    private boolean salirVisible;
+    private final RectF salirCaja = new RectF();
+    private long salirConfirmarHasta;
+    private int backVistos = -1;
+    // Si el BACK del mando tactil estaba pisado en el ultimo sendState.
+    private boolean backTactil;
+    private boolean salirAnotado;
+    // Lo que mide una unidad del menu del juego en cada eje, en pixeles: el menu va
+    // estirado a lo ancho, y el boton con el.
+    private float salirUx, salirUy;
+    private final Paint salirTexto = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint salirPintura = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Path salirFlecha = new Path();
+    private final String textoSalir;
+    private final String textoSalirSeguro;
+    private static final long SALIR_CONFIRMAR_MS = 3000;
+    // Medidas de la indicacion "(A) Aceptar" del juego, en unidades del menu (una captura del
+    // RedMagic, 2026-10-29): la barra rayada, el circulo del icono y su trazo, el hueco hasta el
+    // texto, la altura de las mayusculas, lo que ocupa "Aceptar" y lo que sobra de barra.
+    private static final float SALIR_ALTO = 23.7f;
+    private static final float SALIR_MARGEN = 4.4f;
+    private static final float SALIR_RADIO = 10f;
+    private static final float SALIR_TRAZO = 1.6f;
+    private static final float SALIR_HUECO = 7.3f;
+    private static final float SALIR_MAYUSCULA = 9.8f;
+    private static final float SALIR_ANCHO_ACEPTAR = 58.4f;
+    private static final float SALIR_COLA = 18f;
+    // Las rayas de la barra: cada RAYA_PASO unidades, RAYA_ANCHO de ancho, inclinadas a la
+    // derecha como las del juego.
+    private static final float SALIR_RAYA_PASO = 14f;
+    private static final float SALIR_RAYA_ANCHO = 7f;
+    private static final int SALIR_CREMA = Color.rgb(0xF0, 0xF0, 0xD3);
+    private static final int SALIR_FONDO = Color.argb(140, 0, 0, 0);
+    private static final int SALIR_RAYA = Color.argb(30, 255, 255, 255);
+    private final Runnable finConfirmarSalir = () -> {
+        salirConfirmarHasta = 0;
+        colocarSalir();
+        invalidate();
+    };
+
     // Diagnostico de los toques: files/logs/menus.txt.
     private boolean menusAnotados;
     private static final long MAX_DIAGNOSTICO_MENUS = 1 << 20;
@@ -511,6 +558,7 @@ public final class TouchControllerView extends View {
                 // Mientras se edita, la disposicion la elige el editor.
                 if (!editando) usarDisposicion(dispJuego);
             }
+            mirarSalir(contexto == TouchControllerBridge.CONTEXTO_MENUS);
             anotarDiagnostico();
             postDelayed(this, CONTEXTO_MS);
         }
@@ -579,6 +627,19 @@ public final class TouchControllerView extends View {
         textoOcultar = context.getString(R.string.tactil_ocultar);
         textoMostrar = context.getString(R.string.tactil_mostrar);
         textoMando = context.getString(R.string.tactil_mando);
+        textoSalir = context.getString(R.string.salir_juego);
+        textoSalirSeguro = context.getString(R.string.salir_juego_seguro);
+        // Michroma (res/font, licencia OFL en res/raw): ancha y cuadrada como la del juego.
+        android.graphics.Typeface fuente = android.graphics.Typeface.DEFAULT_BOLD;
+        try {
+            fuente = getResources().getFont(R.font.michroma);
+        } catch (RuntimeException sinFuente) {
+            // La del sistema.
+        }
+        salirTexto.setTypeface(fuente);
+        salirTexto.setColor(SALIR_CREMA);
+        salirTexto.setStyle(Paint.Style.FILL_AND_STROKE);
+        salirTexto.setStrokeJoin(Paint.Join.ROUND);
         textoGestos = context.getString(R.string.tactil_gestos);
         menusTactiles = ajustes.menusTactiles();
         deslizarInvertido = ajustes.deslizarInvertido();
@@ -1086,6 +1147,7 @@ public final class TouchControllerView extends View {
             drawToggle(canvas);
             drawEngranaje(canvas);
         }
+        if (salirALaVista()) drawSalir(canvas);
         if (!controlsVisible) return;
         // Con el dedo en los menus no se dibuja nada: se toca el juego.
         if (conDedo()) return;
@@ -1180,6 +1242,10 @@ public final class TouchControllerView extends View {
                 } else {
                     setControlsVisible(!controlsVisible);
                 }
+                return true;
+            }
+            if (salirTocable() && tocaSalir(x, y)) {
+                pulsarSalir();
                 return true;
             }
             // Oculto: tocar donde esta lo saca, sin pulsarlo. Con mando fisico
@@ -1600,6 +1666,180 @@ public final class TouchControllerView extends View {
     }
 
     // ------------------------------------------------------------------------
+    //  Salir del juego desde el menu principal
+    // ------------------------------------------------------------------------
+
+    /**
+     * Cada CONTEXTO_MS: si se esta en el menu principal (y donde va el boton), y si se ha
+     * pulsado BACK en el mando fisico desde la ultima vez.
+     */
+    private void mirarSalir(boolean enMenus) {
+        boolean visible = !editando && enMenus && TouchControllerBridge.tryMenuPrincipal(menuPrincipal);
+        int back = TouchControllerBridge.tryBackPulsados();
+        // Un BACK de antes de llegar al menu principal no cuenta.
+        boolean pulsoBack = visible && salirVisible && backVistos >= 0 && back > backVistos;
+        backVistos = back;
+        boolean cambio = visible != salirVisible;
+        if (cambio) {
+            salirVisible = visible;
+            salirConfirmarHasta = 0;
+            removeCallbacks(finConfirmarSalir);
+        }
+        if (visible) {
+            float izquierda = salirCaja.left, arriba = salirCaja.top;
+            colocarSalir();
+            cambio |= izquierda != salirCaja.left || arriba != salirCaja.top;
+            if (!salirAnotado) {
+                salirAnotado = true;
+                anotarSalir();
+            }
+        }
+        if (cambio) invalidate();
+        if (pulsoBack) pulsarSalir();
+    }
+
+    /** Se dibuja en el menu principal, con el mando tactil a la vista o sin el. */
+    private boolean salirALaVista() {
+        return salirVisible && !editando;
+    }
+
+    /** Con el mando tactil a la vista solo se ve: para salir esta su BACK. */
+    private boolean salirTocable() {
+        return salirALaVista() && (!controlsVisible || conDedo());
+    }
+
+    private boolean tocaSalir(float x, float y) {
+        float m = dp(8);
+        return x >= salirCaja.left - m && x <= salirCaja.right + m
+                && y >= salirCaja.top - m && y <= salirCaja.bottom + m;
+    }
+
+    /** La primera vez pide confirmar; la segunda, antes de SALIR_CONFIRMAR_MS, sale. */
+    private void pulsarSalir() {
+        long ahora = SystemClock.uptimeMillis();
+        if (salirConfirmarHasta > ahora) {
+            salir();
+            return;
+        }
+        salirConfirmarHasta = ahora + SALIR_CONFIRMAR_MS;
+        removeCallbacks(finConfirmarSalir);
+        postDelayed(finConfirmarSalir, SALIR_CONFIRMAR_MS);
+        colocarSalir();
+        invalidate();
+    }
+
+    /**
+     * Fuera del juego, a la pantalla de inicio: la de la partida se cierra (y con ella su
+     * proceso, GameActivity.onDestroy), y debajo esta SetupActivity.
+     */
+    private void salir() {
+        salirVisible = false;
+        removeCallbacks(finConfirmarSalir);
+        clearInput();
+        invalidate();
+        Context c = getContext();
+        if (c instanceof android.app.Activity) ((android.app.Activity) c).finish();
+    }
+
+    private String textoSalirActual() {
+        return salirConfirmarHasta > 0 ? textoSalirSeguro : textoSalir;
+    }
+
+    /**
+     * Las medidas del boton en pixeles, desde lo que da el juego: su borde izquierdo y su
+     * centro sobre la imagen del juego, y lo que mide una unidad del menu en cada eje. El
+     * texto, a la altura de las mayusculas del juego y estirado como "Aceptar".
+     */
+    private void colocarSalir() {
+        if (imagenJuego.isEmpty()) return;
+        salirUx = menuPrincipal[2] * imagenJuego.width();
+        salirUy = menuPrincipal[3] * imagenJuego.height();
+        float x0 = imagenJuego.left + menuPrincipal[0] * imagenJuego.width();
+        float cy = imagenJuego.top + menuPrincipal[1] * imagenJuego.height();
+        salirTexto.setTextScaleX(1f);
+        salirTexto.setStrokeWidth(0f);
+        salirTexto.setTextSize(100f);
+        android.graphics.Rect h = new android.graphics.Rect();
+        salirTexto.getTextBounds("H", 0, 1, h);
+        if (h.height() <= 0) return;
+        salirTexto.setTextSize(100f * SALIR_MAYUSCULA * salirUy / h.height());
+        float aceptar = salirTexto.measureText("Aceptar");
+        if (aceptar > 0) salirTexto.setTextScaleX(SALIR_ANCHO_ACEPTAR * salirUx / aceptar);
+        // Mas grueso: la del juego es negrita.
+        salirTexto.setStrokeWidth(salirUy * .9f);
+        float ancho = (SALIR_MARGEN + 2 * SALIR_RADIO + SALIR_HUECO + SALIR_COLA) * salirUx
+                + salirTexto.measureText(textoSalirActual());
+        float alto = SALIR_ALTO * salirUy;
+        salirCaja.set(x0, cy - alto * .5f, x0 + ancho, cy + alto * .5f);
+    }
+
+    /** Como las indicaciones del juego: barra oscura con rayas, circulo con el boton y texto. */
+    private void drawSalir(Canvas canvas) {
+        RectF c = salirCaja;
+        if (c.isEmpty()) return;
+        salirPintura.setStyle(Paint.Style.FILL);
+        salirPintura.setColor(SALIR_FONDO);
+        canvas.drawRect(c, salirPintura);
+        canvas.save();
+        canvas.clipRect(c);
+        salirPintura.setColor(SALIR_RAYA);
+        float paso = SALIR_RAYA_PASO * salirUx;
+        float raya = SALIR_RAYA_ANCHO * salirUx;
+        float inclinacion = c.height();
+        for (float x = c.left - inclinacion; x < c.right; x += paso) {
+            salirFlecha.reset();
+            salirFlecha.moveTo(x, c.bottom);
+            salirFlecha.lineTo(x + raya, c.bottom);
+            salirFlecha.lineTo(x + raya + inclinacion, c.top);
+            salirFlecha.lineTo(x + inclinacion, c.top);
+            salirFlecha.close();
+            canvas.drawPath(salirFlecha, salirPintura);
+        }
+        canvas.restore();
+        // El icono: el boton BACK del mando, un circulo con una flecha a la izquierda.
+        float cx = c.left + (SALIR_MARGEN + SALIR_RADIO) * salirUx;
+        float cy = c.centerY();
+        float rx = SALIR_RADIO * salirUx;
+        float ry = SALIR_RADIO * salirUy;
+        salirPintura.setColor(SALIR_CREMA);
+        salirPintura.setStyle(Paint.Style.STROKE);
+        salirPintura.setStrokeWidth(SALIR_TRAZO * salirUy);
+        float t = SALIR_TRAZO * salirUy * .5f;
+        canvas.drawOval(cx - rx + t, cy - ry + t, cx + rx - t, cy + ry - t, salirPintura);
+        salirPintura.setStyle(Paint.Style.FILL);
+        float fx = rx * .45f;
+        float fy = ry * .45f;
+        salirFlecha.reset();
+        salirFlecha.moveTo(cx - fx, cy);
+        salirFlecha.lineTo(cx + fx * .75f, cy - fy);
+        salirFlecha.lineTo(cx + fx * .75f, cy + fy);
+        salirFlecha.close();
+        canvas.drawPath(salirFlecha, salirPintura);
+        // El texto, con las mayusculas centradas en la barra.
+        float base = cy + SALIR_MAYUSCULA * salirUy * .5f;
+        canvas.drawText(textoSalirActual(), cx + rx + SALIR_HUECO * salirUx, base, salirTexto);
+    }
+
+    /** Diagnostico: donde se puso el boton, en files/logs/menus.txt (una vez por partida). */
+    private void anotarSalir() {
+        java.io.File carpeta = getContext().getExternalFilesDir("logs");
+        if (carpeta == null) return;
+        java.io.File f = new java.io.File(carpeta, "menus.txt");
+        boolean seguir = menusAnotados && f.length() < MAX_DIAGNOSTICO_MENUS;
+        menusAnotados = true;
+        try (java.io.FileWriter w = new java.io.FileWriter(f, seguir)) {
+            w.write(new java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.ROOT)
+                    .format(new java.util.Date())
+                    + String.format(java.util.Locale.ROOT,
+                            " menu principal: salir u=%.4f v=%.4f unidad=%.5f/%.5f marco=%.0fx%.0f caja=%s\n",
+                            menuPrincipal[0], menuPrincipal[1], menuPrincipal[2], menuPrincipal[3],
+                            imagenJuego.width(), imagenJuego.height(), salirCaja.toShortString()));
+        } catch (java.io.IOException ignorada) {
+            // Solo es diagnostico.
+        }
+    }
+
+    // ------------------------------------------------------------------------
     //  Editor
     // ------------------------------------------------------------------------
 
@@ -1844,12 +2084,18 @@ public final class TouchControllerView extends View {
         // En el editor no hay juego al que mandarle nada.
         if (editando) return;
         if (!controlsVisible) {
+            backTactil = false;
             TouchControllerBridge.trySetState(-1, 0, 0, 0, 0, 0, 0);
             return;
         }
         int pisado = pulso | mantenido;
         int buttons = pisado & ~(PULSO_LT | PULSO_RT);
         for (Control control : controls) buttons |= control.buttons();
+        // BACK en el menu principal: el boton Salir (y el juego lo recibe igual, como el fisico).
+        boolean back = (buttons & BACK) != 0;
+        boolean pulsoBack = back && !backTactil;
+        backTactil = back;
+        if (pulsoBack && salirALaVista()) post(this::pulsarSalir);
         float lx = leftStick == null ? 0 : leftStick.xValue;
         float ly = leftStick == null ? 0 : leftStick.yValue;
         if (carrilIzq != null && disposicion() == CONDUCIENDO && flechasAlConducir) {

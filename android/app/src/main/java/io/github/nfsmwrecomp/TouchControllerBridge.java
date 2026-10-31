@@ -70,6 +70,35 @@ final class TouchControllerBridge {
         }
     }
 
+    /**
+     * Si se esta en el menu principal, sin nada encima. Entonces deja en salida, sobre la
+     * imagen del juego (0..1): el borde izquierdo del boton Salir, su centro en vertical y lo
+     * que mide una unidad del menu en cada eje (nativo_android.cpp, seccion 11).
+     */
+    static native boolean menuPrincipal(float[] salida);
+
+    static boolean tryMenuPrincipal(float[] salida) {
+        if (!nativeAvailable || !menusDisponibles) return false;
+        try {
+            return menuPrincipal(salida);
+        } catch (UnsatisfiedLinkError error) {
+            return false;
+        }
+    }
+
+    /** Las veces que se ha pulsado BACK en un mando fisico desde que arranco el juego. */
+    static native int backPulsados();
+
+    /** -1 si la libreria no lo sabe. */
+    static int tryBackPulsados() {
+        if (!nativeAvailable || !menusDisponibles) return -1;
+        try {
+            return backPulsados();
+        } catch (UnsatisfiedLinkError error) {
+            return -1;
+        }
+    }
+
     /** Si lo que hay en pantalla es una lista de opciones (una debajo de otra). */
     static native boolean menuEsLista();
 

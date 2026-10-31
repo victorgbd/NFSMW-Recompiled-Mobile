@@ -178,6 +178,10 @@
     <string name="tactil_ocultar">UKRYJ</string>
     <string name="tactil_mostrar">DOTYK</string>
     <string name="tactil_mando">PAD</string>
+    <!-- El boton del menu principal que cierra el juego y vuelve a la pantalla de inicio,
+         y lo que pone al tocarlo una vez (se toca otra para salir). -->
+    <string name="salir_juego">Wyjdź</string>
+    <string name="salir_juego_seguro">Na pewno?</string>
     <string name="tactil_gestos">PALEC</string>
     <string name="seccion_perfil">Profil Xbox 360</string>
     <string name="gamertag_resumen">Nazwa, którą gra widzi w twoim profilu. Jeśli ją zmienisz, zapisy gry zostaną: zależą od ID profilu, nie od nazwy.</string>

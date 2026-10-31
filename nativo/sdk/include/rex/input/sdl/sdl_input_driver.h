@@ -24,6 +24,8 @@
 extern "C" void rex_sdl_set_touch_gamepad_state(uint16_t buttons, int16_t left_x, int16_t left_y,
                                                  int16_t right_x, int16_t right_y,
                                                  uint8_t left_trigger, uint8_t right_trigger);
+// Cuantas veces se ha pulsado BACK en un mando fisico (no en el tactil) desde que arranco.
+extern "C" uint32_t rex_sdl_back_pulsados();
 
 #define HID_SDL_THUMB_THRES 0x4E00
 #define HID_SDL_TRIGG_THRES 0x1F

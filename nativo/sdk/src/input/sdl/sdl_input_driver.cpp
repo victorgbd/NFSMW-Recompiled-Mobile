@@ -45,6 +45,9 @@ struct TouchPad {
 };
 std::atomic<uint64_t> g_touch_sticks{0};  // lx, ly, rx, ry
 std::atomic<uint32_t> g_touch_rest{0};    // buttons | lt << 16 | rt << 24
+// Cuantas veces se ha pulsado BACK en un mando fisico: el boton Salir del menu principal
+// (nativo_android.cpp, seccion 11) lo mira para salir tambien con el mando.
+std::atomic<uint32_t> g_back_pulsados{0};
 
 TouchPad LeerTouch() {
   const uint64_t s = g_touch_sticks.load(std::memory_order_acquire);
@@ -63,6 +66,10 @@ extern "C" void rex_sdl_set_touch_gamepad_state(uint16_t buttons, int16_t left_x
                        std::memory_order_release);
   g_touch_rest.store(uint32_t(buttons) | uint32_t(left_trigger) << 16 | uint32_t(right_trigger) << 24,
                      std::memory_order_release);
+}
+
+extern "C" uint32_t rex_sdl_back_pulsados() {
+  return g_back_pulsados.load(std::memory_order_relaxed);
 }
 
 SDLInputDriver::SDLInputDriver(rex::ui::Window* window, size_t window_z_order)
@@ -661,6 +668,9 @@ void SDLInputDriver::OnControllerDeviceButtonChangedLocked(const SDL_Event& even
   if (event.gbutton.down) {
     if (xbutton == X_INPUT_GAMEPAD_GUIDE && !REXCVAR_GET(guide_button)) {
       return;
+    }
+    if (xbutton == X_INPUT_GAMEPAD_BACK && !(xbuttons & xbutton)) {
+      g_back_pulsados.fetch_add(1, std::memory_order_relaxed);
     }
     xbuttons |= xbutton;
   } else {

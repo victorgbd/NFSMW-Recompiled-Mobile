@@ -22,6 +22,8 @@
 //      pide al mando (GameActivity.vibrarMando).
 //  10. Los menus con el dedo: que hay debajo de un toque (las indicaciones de
 //      botones y las opciones), para TouchControllerView.
+//  11. El boton Salir del menu principal: si se esta en el, donde va, y las
+//      pulsaciones de BACK del mando fisico.
 //
 // iOS (ios/motor/controles_tactiles.mm, el TouchControllerView de alli) compila
 // tambien este fichero, sin lo que es de Android (JNI, AAudio, afinidad, el URI
@@ -84,12 +86,16 @@ extern "C" bool NfsmwTactilMenuRotar();
 extern "C" bool NfsmwTactilMenuEsLista();
 extern "C" int32_t NfsmwTactilMenuRumbo();
 std::string NfsmwTactilMenuDiagnostico();
+extern "C" bool NfsmwTactilMenuPrincipal(float* salida);
+extern "C" uint32_t NfsmwTactilBackPulsados();
 
 // El mando tactil del SDK del motor nativo (sdk/src/input/sdl/sdl_input_driver.cpp):
 // el estado va directo al mando del juego, sin pasar por un mando virtual de SDL.
 extern "C" void rex_sdl_set_touch_gamepad_state(uint16_t buttons, int16_t left_x, int16_t left_y,
                                                  int16_t right_x, int16_t right_y,
                                                  uint8_t left_trigger, uint8_t right_trigger);
+// Y las veces que se ha pulsado BACK en un mando fisico (seccion 11).
+extern "C" uint32_t rex_sdl_back_pulsados();
 
 // Fotogramas que ha presentado el juego (app/src/nfsmw_d3d_trace.cpp, en su gancho del Swap).
 extern std::atomic<uint64_t> g_nfsmw_fotogramas_juego;
@@ -2464,7 +2470,83 @@ std::string NfsmwTactilMenuDiagnostico() {
   return s;
 }
 
+// ---------------------------------------------------------------------------
+//  11. El boton Salir del menu principal
+// ---------------------------------------------------------------------------
+//
+// El 360 no tiene como salir del juego: en el movil, TouchControllerView pone en el menu
+// principal (MainMenu.fng) una indicacion mas, "Salir", con el estilo de las del juego, a la
+// derecha del recuadro del perfil y encima de "Estadisticas". Va donde la pone el juego:
+// medida desde el icono de A de la barra de abajo, que no se mueve con el idioma (el de Y si:
+// va detras de "Aceptar"). Medido en una captura del RedMagic (PAL Espana, 2026-10-29): el
+// circulo de A centrado en (-258, 192) y el recuadro del perfil acabando en x = -122, a la
+// altura y = 147.
+constexpr char kPaqueteMenuPrincipal[] = "MainMenu.fng";
+constexpr float kSalirDesdeA_x = 140.0f;   // su borde izquierdo, desde el centro del icono de A
+constexpr float kSalirDesdeA_y = -45.0f;   // su centro
+
+// Si se esta en el menu principal, sin nada encima (un dialogo, un submenu): solo lo atiende
+// MainMenu.fng y estan sus indicaciones de A e Y. Entonces deja en salida, sobre la imagen del
+// juego (0..1): el borde izquierdo del boton, su centro en vertical, y lo que mide una unidad
+// del menu en cada eje (TouchControllerView dibuja en unidades del menu, estiradas como el).
+extern "C" bool NfsmwTactilMenuPrincipal(float* salida) {
+  Menu menu;
+  if (!LeerMenu(menu)) {
+    return false;
+  }
+  bool principal = false;
+  for (const auto& p : menu.paquetes) {
+    if (!p.atiende) {
+      continue;
+    }
+    if (std::strcmp(p.nombre, kPaqueteMenuPrincipal) != 0) {
+      return false;
+    }
+    principal = true;
+  }
+  const Indicacion* a = nullptr;
+  bool y = false;
+  for (const Indicacion& ind : menu.indicaciones) {
+    if (ind.icono.Cy() < kBarraAbajo) {
+      continue;
+    }
+    if (ind.boton == kBotonA && !a) {
+      a = &ind;
+    }
+    y = y || ind.boton == kBotonY;
+  }
+  if (!principal || !a || !y) {
+    return false;
+  }
+  const float x = a->icono.Cx() + kSalirDesdeA_x;
+  const float cy = a->icono.Cy() + kSalirDesdeA_y;
+  salida[0] = x * kFraccionAncho / kAnchoMenu + 0.5f;
+  salida[1] = cy / kAltoMenu + 0.5f;
+  salida[2] = kFraccionAncho / kAnchoMenu;
+  salida[3] = 1.0f / kAltoMenu;
+  return true;
+}
+
+// Las veces que se ha pulsado BACK en un mando fisico: con el mando, BACK es "Salir".
+extern "C" uint32_t NfsmwTactilBackPulsados() {
+  return rex_sdl_back_pulsados();
+}
+
 #if defined(__ANDROID__)
+extern "C" JNIEXPORT jboolean JNICALL Java_io_github_nfsmwrecomp_TouchControllerBridge_menuPrincipal(
+    JNIEnv* env, jclass, jfloatArray salida) {
+  float valores[4];
+  if (!salida || env->GetArrayLength(salida) < 4 || !NfsmwTactilMenuPrincipal(valores)) {
+    return JNI_FALSE;
+  }
+  env->SetFloatArrayRegion(salida, 0, 4, valores);
+  return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT jint JNICALL Java_io_github_nfsmwrecomp_TouchControllerBridge_backPulsados(JNIEnv*, jclass) {
+  return jint(NfsmwTactilBackPulsados());
+}
+
 extern "C" JNIEXPORT jint JNICALL Java_io_github_nfsmwrecomp_TouchControllerBridge_menuTocar(JNIEnv*, jclass,
                                                                                           jfloat u, jfloat v) {
   return NfsmwTactilMenuTocar(u, v);

@@ -173,6 +173,10 @@
     <string name="tactil_ocultar">OCULTAR</string>
     <string name="tactil_mostrar">TOQUE</string>
     <string name="tactil_mando">CONTROLE</string>
+    <!-- El boton del menu principal que cierra el juego y vuelve a la pantalla de inicio,
+         y lo que pone al tocarlo una vez (se toca otra para salir). -->
+    <string name="salir_juego">Sair</string>
+    <string name="salir_juego_seguro">Tem certeza?</string>
     <string name="tactil_gestos">DEDO</string>
     <string name="seccion_perfil">Perfil do Xbox 360</string>
     <string name="gamertag_resumen">O nome que o jogo vê no seu perfil. Se você mudar, seus jogos salvos são mantidos: eles vão pelo ID do perfil, não pelo nome.</string>

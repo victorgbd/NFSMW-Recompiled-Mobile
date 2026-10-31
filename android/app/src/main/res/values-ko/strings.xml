@@ -178,6 +178,10 @@
     <string name="tactil_ocultar">숨기기</string>
     <string name="tactil_mostrar">터치</string>
     <string name="tactil_mando">패드</string>
+    <!-- El boton del menu principal que cierra el juego y vuelve a la pantalla de inicio,
+         y lo que pone al tocarlo una vez (se toca otra para salir). -->
+    <string name="salir_juego">종료</string>
+    <string name="salir_juego_seguro">정말요?</string>
     <string name="tactil_gestos">손가락</string>
     <string name="seccion_perfil">Xbox 360 프로필</string>
     <string name="gamertag_resumen">게임이 프로필에서 보는 이름입니다. 바꿔도 저장 데이터는 유지됩니다. 이름이 아니라 프로필 ID로 관리되기 때문입니다.</string>

@@ -178,6 +178,10 @@
     <string name="tactil_ocultar">隱藏</string>
     <string name="tactil_mostrar">觸控</string>
     <string name="tactil_mando">手把</string>
+    <!-- El boton del menu principal que cierra el juego y vuelve a la pantalla de inicio,
+         y lo que pone al tocarlo una vez (se toca otra para salir). -->
+    <string name="salir_juego">離開</string>
+    <string name="salir_juego_seguro">確定？</string>
     <string name="tactil_gestos">手指</string>
     <string name="seccion_perfil">Xbox 360 個人檔案</string>
     <string name="gamertag_resumen">遊戲在你的個人檔案中看到的名稱。更改後存檔仍會保留：存檔是依個人檔案 ID，而不是名稱。</string>

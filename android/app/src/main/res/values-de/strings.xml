@@ -178,6 +178,10 @@
     <string name="tactil_ocultar">AUSBL.</string>
     <string name="tactil_mostrar">TOUCH</string>
     <string name="tactil_mando">PAD</string>
+    <!-- El boton del menu principal que cierra el juego y vuelve a la pantalla de inicio,
+         y lo que pone al tocarlo una vez (se toca otra para salir). -->
+    <string name="salir_juego">Beenden</string>
+    <string name="salir_juego_seguro">Sicher?</string>
     <string name="tactil_gestos">FINGER</string>
     <string name="seccion_perfil">Xbox-360-Profil</string>
     <string name="gamertag_resumen">Der Name, den das Spiel in deinem Profil sieht. Wenn du ihn änderst, bleiben deine Spielstände erhalten: Sie hängen an der Profil-ID, nicht am Namen.</string>

@@ -201,6 +201,10 @@
     <string name="tactil_ocultar">HIDE</string>
     <string name="tactil_mostrar">TOUCH</string>
     <string name="tactil_mando">PAD</string>
+    <!-- El boton del menu principal que cierra el juego y vuelve a la pantalla de inicio,
+         y lo que pone al tocarlo una vez (se toca otra para salir). -->
+    <string name="salir_juego">Exit</string>
+    <string name="salir_juego_seguro">Sure?</string>
     <string name="tactil_gestos">FINGER</string>
     <string name="seccion_perfil">Xbox 360 profile</string>
     <string name="gamertag" translatable="false">Gamertag</string>

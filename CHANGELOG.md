@@ -10,6 +10,18 @@ proyecto vibe-codeado: ver la sección "This fork" del [README](README.md).
 
 ### Añadido
 
+- **Botón «Salir» en el menú principal** (0.5.6, motor nativo): el 360 no tiene cómo salir del
+  juego. En el menú principal (`MainMenu.fng`, sin diálogos ni submenús encima) sale una
+  indicación más, «◄ Salir», con el estilo de las del juego (barra oscura rayada, círculo con la
+  flecha del botón BACK y texto crema en Michroma, fuente OFL parecida a la del juego, licencia
+  en `res/raw`). Va a la derecha del recuadro del perfil, encima de «Estadísticas», medida desde
+  el icono de A, que no se mueve con el idioma. Un toque pide «¿Seguro?» durante 3 s y otro
+  cierra la partida y vuelve al lanzador. Con mando físico, BACK hace lo mismo: el SDK cuenta sus
+  pulsaciones (`rex_sdl_back_pulsados`). Se ve siempre, también con el mando táctil encima del
+  menú (sin «menús con el dedo»), pero entonces no se toca: lo hace su BACK, como el del mando
+  físico. Textos en los 10 idiomas. En iOS el mismo botón (`controles_tactiles.mm`, la fuente la
+  mete `compilar.sh`) cierra la app, porque allí no se puede volver al lanzador sin reiniciar el
+  proceso; al abrirla otra vez sale el lanzador. Sin ver en el móvil todavía, ni compilado en iOS.
 - **Exportar e importar las partidas** (sección Juego del lanzador): el motor nativo guarda en el
   almacenamiento interno de la app (`files/nativo/usuario`), donde no llegan ni el explorador ni
   el PC. «Exportar» mete en un `.zip`, donde diga el selector de Android, el perfil, las partidas,
@@ -530,6 +542,12 @@ proyecto vibe-codeado: ver la sección "This fork" del [README](README.md).
 
 ### Cambiado
 
+- **Girar con flechas, a tope de golpe como el teclado de PC** (0.5.6): antes el giro empezaba al
+  50 % y llegaba al 100 % en 300 ms. En la versión de PC la tecla llega al coche como 1.0 sin
+  rampa, y lo gradual lo pone la física (`SuspensionRacer::DoHumanSteering`: 180°/s como mucho,
+  menos a velocidad, y el ángulo máximo baja de 40° a unos 3°), que es la misma que en el 360:
+  las tablas de giro están iguales en `speed.exe` y en el XEX. Un salto de 0 a 1 además le da el
+  giro de ruedas más rápido posible. Android e iOS.
 - **Android 8.0 como mínimo** (0.5.5, `minSdk 26`, antes 29): para llegar a los móviles con GLES 3.2
   que se quedaron en Android 8 o 9 (Galaxy S7/S8/Note 8, Snapdragon 820/835, Pixel 1), que es
   para lo que está el backend de OpenGL ES. Los motivos de cierre (Android 11) y el recorte de la

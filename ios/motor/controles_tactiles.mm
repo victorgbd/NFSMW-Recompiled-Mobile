@@ -20,6 +20,7 @@
 
 #import <CoreHaptics/CoreHaptics.h>
 #import <CoreMotion/CoreMotion.h>
+#import <CoreText/CoreText.h>
 #import <GameController/GameController.h>
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
@@ -28,6 +29,7 @@
 #include <SDL3/SDL_hints.h>
 
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
@@ -56,6 +58,8 @@ extern "C" int32_t NfsmwTactilMenuTocar(float u, float v);
 extern "C" bool NfsmwTactilMenuRotar();
 extern "C" bool NfsmwTactilMenuEsLista();
 extern "C" int32_t NfsmwTactilMenuRumbo();
+extern "C" bool NfsmwTactilMenuPrincipal(float* salida);
+extern "C" uint32_t NfsmwTactilBackPulsados();
 std::string NfsmwTactilMenuDiagnostico();
 // Fotogramas que ha presentado el juego (nativo/app/src/nfsmw_d3d_trace.cpp, en su gancho del Swap).
 extern std::atomic<uint64_t> g_nfsmw_fotogramas_juego;
@@ -91,6 +95,16 @@ constexpr uint32_t BORDE = Argb(205, 255, 255, 255);
 constexpr uint32_t FONDO_BOTON = Argb(175, 15, 15, 18);
 constexpr uint32_t BLANCO = Argb(255, 255, 255, 255);
 
+// El boton Salir del menu principal (TouchControllerView, SALIR_*): las medidas de la indicacion
+// "(A) Aceptar" del juego, en unidades del menu (una captura del RedMagic, 2026-10-29).
+constexpr double SALIR_CONFIRMAR_MS = 3000;
+constexpr float SALIR_ALTO = 23.7f, SALIR_MARGEN = 4.4f, SALIR_RADIO = 10.f, SALIR_TRAZO = 1.6f,
+                SALIR_HUECO = 7.3f, SALIR_MAYUSCULA = 9.8f, SALIR_ANCHO_ACEPTAR = 58.4f, SALIR_COLA = 18.f;
+constexpr float SALIR_RAYA_PASO = 14.f, SALIR_RAYA_ANCHO = 7.f;
+constexpr uint32_t SALIR_CREMA = Argb(255, 0xF0, 0xF0, 0xD3);
+constexpr uint32_t SALIR_FONDO = Argb(140, 0, 0, 0);
+constexpr uint32_t SALIR_RAYA = Argb(30, 255, 255, 255);
+
 constexpr double TOGGLE_MS = 4000;
 constexpr float PASO = .1f, ESCALA_MIN = .5f, ESCALA_MAX = 2.f, OPACIDAD_MIN = .2f;
 
@@ -105,8 +119,9 @@ constexpr int SIN_ICONO = 0, ICONO_CAMARA = 1, ICONO_RETROVISOR = 2, ICONO_POSIC
               ICONO_FRENO_MANO = 5, ICONO_RELOJ = 6;
 const char* const PUESTOS[] = {"1", "2", "3"};
 
-constexpr float GIRO_FLECHA_INICIAL = .5f;
-constexpr double GIRO_FLECHA_MS = 300;
+// A tope de golpe, como el teclado del juego en PC (TouchControllerView.java en Android).
+constexpr float GIRO_FLECHA_INICIAL = 1.f;
+constexpr double GIRO_FLECHA_MS = 250;
 constexpr float ZONA_MUERTA_GIRO = .03f;
 
 constexpr float PELLIZCO_DP = 14, PELLIZCO_PASO_DP = 4;
@@ -145,6 +160,7 @@ struct Rect {
 // Los textos de la app de Android (res/values*/strings.xml), en el idioma de la app.
 struct Textos {
   NSString *ocultar, *mostrar, *mando, *gestos, *tamano, *opacidad, *restaurar, *cancelar, *listo, *ayuda;
+  NSString *salir, *salirSeguro;
   NSString* disp[3];
 };
 
@@ -160,10 +176,30 @@ Textos CargarTextos() {
   t.cancelar = NfsmwTexto(@"editor_cancelar");
   t.listo = NfsmwTexto(@"editor_listo");
   t.ayuda = NfsmwTexto(@"editor_ayuda");
+  t.salir = NfsmwTexto(@"salir_juego");
+  t.salirSeguro = NfsmwTexto(@"salir_juego_seguro");
   t.disp[NORMAL] = NfsmwTexto(@"editor_disposicion_normal");
   t.disp[ACELERACION] = NfsmwTexto(@"editor_disposicion_aceleracion");
   t.disp[CONDUCIENDO] = NfsmwTexto(@"editor_disposicion_conduciendo");
   return t;
+}
+
+// La fuente del boton Salir: Michroma (OFL), la de res/font de Android, que compilar.sh mete en la
+// app. Sin ella, la negrita del sistema.
+UIFont* FuenteSalir(CGFloat tamano) {
+  static CTFontDescriptorRef descriptor = [] {
+    CTFontDescriptorRef d = nullptr;
+    if (NSURL* url = [NSBundle.mainBundle URLForResource:@"michroma" withExtension:@"ttf"]) {
+      CFArrayRef lista = CTFontManagerCreateFontDescriptorsFromURL((__bridge CFURLRef)url);
+      if (lista && CFArrayGetCount(lista) > 0) {
+        d = (CTFontDescriptorRef)CFRetain(CFArrayGetValueAtIndex(lista, 0));
+      }
+      if (lista) CFRelease(lista);
+    }
+    return d;
+  }();
+  if (!descriptor) return [UIFont boldSystemFontOfSize:tamano];
+  return (__bridge_transfer UIFont*)CTFontCreateWithFontDescriptor(descriptor, tamano, nullptr);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -505,6 +541,19 @@ class Tactil {
   void mirarContexto();
   void anotarDiagnostico();
 
+  void mirarSalir(bool enMenus);
+  bool salirALaVista() const { return salirVisible && !editando; }
+  // Con el mando tactil a la vista solo se ve: para salir esta su BACK.
+  bool salirTocable() const { return salirALaVista() && (!controlsVisible || conDedo()); }
+  bool tocaSalir(float x, float y) const;
+  void pulsarSalir();
+  void salir();
+  NSString* textoSalirActual() const { return salirConfirmarHasta > 0 ? textos_.salirSeguro : textos_.salir; }
+  NSDictionary* atributosSalir() const;
+  void colocarSalir();
+  void drawSalir(CGContextRef c);
+  void anotarSalir();
+
   bool tocarMenu(const Evento& e);
   bool tocarCinematica(const Evento& e);
   int gatilloBajo(float x, float y);
@@ -625,6 +674,25 @@ class Tactil {
   Tarea siguientePulso_;
   Tarea soltarPulso_;
   bool menusAnotados = false;
+
+  // Salir del juego desde el menu principal (nativo_android.cpp, seccion 11): una indicacion
+  // mas, "Salir", con el estilo de las del juego. Se ve siempre; se toca solo sin el mando
+  // tactil a la vista (con el, su BACK hace lo mismo, como el del mando fisico). Toca (o BACK)
+  // una vez y pide confirmar; otra antes de SALIR_CONFIRMAR_MS, cierra la app.
+  float menuPrincipal[4] = {};
+  bool salirVisible = false;
+  Rect salirCaja;
+  double salirConfirmarHasta = 0;
+  int backVistos = -1;
+  // Si el BACK del mando tactil estaba pisado en el ultimo sendState.
+  bool backTactil = false;
+  bool salirAnotado = false;
+  // Lo que mide una unidad del menu del juego en cada eje: el menu va estirado a lo ancho, y el
+  // boton con el. El texto, a la altura de las mayusculas del juego y estirado como "Aceptar".
+  float salirUx = 0, salirUy = 0;
+  UIFont* salirFuente = nil;
+  float salirEscalaX = 1, salirGrosor = 0;
+  Tarea finConfirmarSalir_;
 };
 
 bool Control::oculto() { return (visibleEn & (1 << t->disposicion())) == 0; }
@@ -1303,6 +1371,7 @@ void Tactil::dibujar(CGContextRef c) {
     drawBoton(c, toggle, textoToggle(), dp(11));
     drawEngranaje(c);
   }
+  if (salirALaVista()) drawSalir(c);
   if (!controlsVisible) return;
   // Con el dedo en los menus no se dibuja nada: se toca el juego.
   if (conDedo()) return;
@@ -1481,6 +1550,7 @@ void Tactil::mirarContexto() {
     clearInput();
     if (!editando) usarDisposicion(dispJuego);
   }
+  mirarSalir(contexto == CONTEXTO_MENUS);
   anotarDiagnostico();
 }
 
@@ -1495,6 +1565,168 @@ void Tactil::anotarDiagnostico() {
   const std::string ruta = CarpetaLogs() + "/contexto.txt";
   if (FILE* f = std::fopen(ruta.c_str(), primera ? "w" : "a")) {
     std::fprintf(f, "%s ctx=%s%s %s\n", Hora().c_str(), NOMBRES_DISP[dispJuego], enPausa ? "+pausa" : "", linea);
+    std::fclose(f);
+  }
+}
+
+// ---- Salir del juego desde el menu principal ---------------------------------------------------
+
+// Cada CONTEXTO_MS: si se esta en el menu principal (y donde va el boton), y si se ha pulsado
+// BACK en el mando fisico desde la ultima vez.
+void Tactil::mirarSalir(bool enMenus) {
+  const bool visible = !editando && enMenus && NfsmwTactilMenuPrincipal(menuPrincipal);
+  const int back = int(NfsmwTactilBackPulsados());
+  // Un BACK de antes de llegar al menu principal no cuenta.
+  const bool pulsoBack = visible && salirVisible && backVistos >= 0 && back > backVistos;
+  backVistos = back;
+  bool cambio = visible != salirVisible;
+  if (cambio) {
+    salirVisible = visible;
+    salirConfirmarHasta = 0;
+    Cancelar(finConfirmarSalir_);
+  }
+  if (visible) {
+    const float izquierda = salirCaja.left, arriba = salirCaja.top;
+    colocarSalir();
+    cambio |= izquierda != salirCaja.left || arriba != salirCaja.top;
+    if (!salirAnotado) {
+      salirAnotado = true;
+      anotarSalir();
+    }
+  }
+  if (cambio) invalidate();
+  if (pulsoBack) pulsarSalir();
+}
+
+bool Tactil::tocaSalir(float x, float y) const {
+  const float m = dp(8);
+  return x >= salirCaja.left - m && x <= salirCaja.right + m && y >= salirCaja.top - m && y <= salirCaja.bottom + m;
+}
+
+// La primera vez pide confirmar; la segunda, antes de SALIR_CONFIRMAR_MS, sale.
+void Tactil::pulsarSalir() {
+  if (!salirALaVista()) return;
+  const double ahora = ahoraMs();
+  if (salirConfirmarHasta > ahora) {
+    salir();
+    return;
+  }
+  salirConfirmarHasta = ahora + SALIR_CONFIRMAR_MS;
+  Programar(finConfirmarSalir_, SALIR_CONFIRMAR_MS, [this] {
+    salirConfirmarHasta = 0;
+    colocarSalir();
+    invalidate();
+  });
+  colocarSalir();
+  invalidate();
+}
+
+// iOS no deja volver al lanzador sin cerrar la app (el motor no se puede apagar y arrancar otra
+// vez en el mismo proceso): se cierra, como killProcess en GameActivity.onDestroy, y al abrirla
+// otra vez sale el lanzador. _exit y no exit: los destructores estaticos, con los hilos del juego
+// todavia en marcha, pueden colgarse o fallar; los logs se vacian antes.
+void Tactil::salir() {
+  salirVisible = false;
+  Cancelar(finConfirmarSalir_);
+  clearInput();
+  os_log(OS_LOG_DEFAULT, "[tactil] salir desde el menu principal");
+  std::fflush(nullptr);
+  _exit(0);
+}
+
+NSDictionary* Tactil::atributosSalir() const {
+  // Mas grueso, como FILL_AND_STROKE en Android: la del juego es negrita. Negativo es rellenar y
+  // trazar; va en tanto por ciento del tamano de la letra.
+  return @{
+    NSFontAttributeName : salirFuente,
+    NSForegroundColorAttributeName : [UIColor colorWithRed:((SALIR_CREMA >> 16) & 0xFF) / 255.0
+                                                     green:((SALIR_CREMA >> 8) & 0xFF) / 255.0
+                                                      blue:(SALIR_CREMA & 0xFF) / 255.0
+                                                     alpha:1],
+    NSStrokeWidthAttributeName : @(-100.0 * salirGrosor / std::max<CGFloat>(salirFuente.pointSize, 1)),
+  };
+}
+
+// Las medidas del boton desde lo que da el juego: su borde izquierdo y su centro sobre la
+// imagen del juego, y lo que mide una unidad del menu en cada eje.
+void Tactil::colocarSalir() {
+  if (imagenJuego.width() <= 0 || imagenJuego.height() <= 0) return;
+  salirUx = menuPrincipal[2] * imagenJuego.width();
+  salirUy = menuPrincipal[3] * imagenJuego.height();
+  const float x0 = imagenJuego.left + menuPrincipal[0] * imagenJuego.width();
+  const float cy = imagenJuego.top + menuPrincipal[1] * imagenJuego.height();
+  UIFont* cien = FuenteSalir(100);
+  if (cien.capHeight <= 0) return;
+  salirFuente = FuenteSalir(100 * SALIR_MAYUSCULA * salirUy / cien.capHeight);
+  const float aceptar = float([@"Aceptar" sizeWithAttributes:@{NSFontAttributeName : salirFuente}].width);
+  salirEscalaX = aceptar > 0 ? SALIR_ANCHO_ACEPTAR * salirUx / aceptar : 1;
+  salirGrosor = salirUy * .9f;
+  const float texto = float([textoSalirActual() sizeWithAttributes:@{NSFontAttributeName : salirFuente}].width);
+  const float ancho = (SALIR_MARGEN + 2 * SALIR_RADIO + SALIR_HUECO + SALIR_COLA) * salirUx + texto * salirEscalaX;
+  const float alto = SALIR_ALTO * salirUy;
+  salirCaja.set(x0, cy - alto * .5f, x0 + ancho, cy + alto * .5f);
+}
+
+// Como las indicaciones del juego: barra oscura con rayas, circulo con el boton y texto.
+void Tactil::drawSalir(CGContextRef c) {
+  const Rect& r = salirCaja;
+  if (r.width() <= 0 || r.height() <= 0 || !salirFuente) return;
+  PonerRelleno(c, SALIR_FONDO);
+  CGContextFillRect(c, r.cg());
+  CGContextSaveGState(c);
+  CGContextClipToRect(c, r.cg());
+  PonerRelleno(c, SALIR_RAYA);
+  const float paso = SALIR_RAYA_PASO * salirUx;
+  const float raya = SALIR_RAYA_ANCHO * salirUx;
+  const float inclinacion = r.height();
+  if (paso > 0) {
+    for (float x = r.left - inclinacion; x < r.right; x += paso) {
+      CGContextBeginPath(c);
+      CGContextMoveToPoint(c, x, r.bottom);
+      CGContextAddLineToPoint(c, x + raya, r.bottom);
+      CGContextAddLineToPoint(c, x + raya + inclinacion, r.top);
+      CGContextAddLineToPoint(c, x + inclinacion, r.top);
+      CGContextClosePath(c);
+      CGContextFillPath(c);
+    }
+  }
+  CGContextRestoreGState(c);
+  // El icono: el boton BACK del mando, un circulo con una flecha a la izquierda.
+  const float cx = r.left + (SALIR_MARGEN + SALIR_RADIO) * salirUx;
+  const float cy = r.centerY();
+  const float rx = SALIR_RADIO * salirUx;
+  const float ry = SALIR_RADIO * salirUy;
+  const float t = SALIR_TRAZO * salirUy * .5f;
+  PonerTrazo(c, SALIR_CREMA, SALIR_TRAZO * salirUy);
+  CGContextStrokeEllipseInRect(c, CGRectMake(cx - rx + t, cy - ry + t, (rx - t) * 2, (ry - t) * 2));
+  PonerRelleno(c, SALIR_CREMA);
+  const float fx = rx * .45f, fy = ry * .45f;
+  CGContextBeginPath(c);
+  CGContextMoveToPoint(c, cx - fx, cy);
+  CGContextAddLineToPoint(c, cx + fx * .75f, cy - fy);
+  CGContextAddLineToPoint(c, cx + fx * .75f, cy + fy);
+  CGContextClosePath(c);
+  CGContextFillPath(c);
+  // El texto, con las mayusculas centradas en la barra y estirado a lo ancho.
+  const float base = cy + SALIR_MAYUSCULA * salirUy * .5f;
+  CGContextSaveGState(c);
+  CGContextTranslateCTM(c, cx + rx + SALIR_HUECO * salirUx, base);
+  CGContextScaleCTM(c, salirEscalaX, 1);
+  [textoSalirActual() drawAtPoint:CGPointMake(0, -salirFuente.ascender) withAttributes:atributosSalir()];
+  CGContextRestoreGState(c);
+}
+
+// Diagnostico: donde se puso el boton, en Documents/logs/menus.txt (una vez por partida).
+void Tactil::anotarSalir() {
+  const std::string ruta = CarpetaLogs() + "/menus.txt";
+  struct stat st {};
+  const bool seguir = menusAnotados && stat(ruta.c_str(), &st) == 0 && st.st_size < MAX_DIAGNOSTICO_MENUS;
+  menusAnotados = true;
+  if (FILE* f = std::fopen(ruta.c_str(), seguir ? "a" : "w")) {
+    std::fprintf(f, "%s menu principal: salir u=%.4f v=%.4f unidad=%.5f/%.5f marco=%.0fx%.0f caja=[%.0f,%.0f][%.0f,%.0f]\n",
+                 Hora().c_str(), menuPrincipal[0], menuPrincipal[1], menuPrincipal[2], menuPrincipal[3],
+                 imagenJuego.width(), imagenJuego.height(), salirCaja.left, salirCaja.top, salirCaja.right,
+                 salirCaja.bottom);
     std::fclose(f);
   }
 }
@@ -1529,6 +1761,10 @@ void Tactil::tocar(const Evento& event) {
       } else {
         setControlsVisible(!controlsVisible);
       }
+      return;
+    }
+    if (salirTocable() && tocaSalir(x, y)) {
+      pulsarSalir();
       return;
     }
     if (enToggle || (mandoFisico && !controlsVisible)) {
@@ -2108,12 +2344,22 @@ void Tactil::inclinacion(CMAcceleration g, UIInterfaceOrientation orientacion) {
 void Tactil::sendState() {
   if (editando) return;
   if (!controlsVisible) {
+    backTactil = false;
     NfsmwTactilEstado(-1, 0, 0, 0, 0, 0, 0);
     return;
   }
   const int pisado = pulso | mantenido;
   int buttons = pisado & ~(PULSO_LT | PULSO_RT);
   for (auto& control : controls) buttons |= control->buttons();
+  // BACK en el menu principal: el boton Salir (y el juego lo recibe igual, como el fisico).
+  const bool back = (buttons & BACK) != 0;
+  const bool pulsoBack = back && !backTactil;
+  backTactil = back;
+  if (pulsoBack && salirALaVista()) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      this->pulsarSalir();
+    });
+  }
   float lx = leftStick ? leftStick->xValue : 0;
   float ly = leftStick ? leftStick->yValue : 0;
   if (carrilIzq && disposicion() == CONDUCIENDO && flechasAlConducir) {

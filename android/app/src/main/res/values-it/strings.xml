@@ -178,6 +178,10 @@
     <string name="tactil_ocultar">NASCONDI</string>
     <string name="tactil_mostrar">TOUCH</string>
     <string name="tactil_mando">PAD</string>
+    <!-- El boton del menu principal que cierra el juego y vuelve a la pantalla de inicio,
+         y lo que pone al tocarlo una vez (se toca otra para salir). -->
+    <string name="salir_juego">Esci</string>
+    <string name="salir_juego_seguro">Sicuro?</string>
     <string name="tactil_gestos">DITO</string>
     <string name="seccion_perfil">Profilo Xbox 360</string>
     <string name="gamertag_resumen">Il nome che il gioco vede nel tuo profilo. Se lo cambi, i salvataggi restano: vanno per ID del profilo, non per nome.</string>

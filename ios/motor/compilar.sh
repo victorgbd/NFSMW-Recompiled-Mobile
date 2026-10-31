@@ -82,6 +82,9 @@ app="$build/Payload/nfsmw.app"
 python3 "$aqui/textos.py" "$repo/android/app/src/main/res" "$aqui/textos" "$app/textos.json"
 # El icono, el de Android en los tamanos de iOS (los nombra CFBundleIconFiles en Info.plist).
 python3 "$aqui/iconos.py" "$repo/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" "$app"
+# La fuente del boton Salir del menu principal (res/font de Android, OFL) y su licencia.
+cp "$repo/android/app/src/main/res/font/michroma.ttf" "$app/michroma.ttf"
+cp "$repo/android/app/src/main/res/raw/licencia_michroma.txt" "$app/licencia_michroma.txt"
 # Los ajustes del motor que lleva el APK (assets/nativo/nfsmw.toml): el lanzador los copia a Documents.
 cp "$repo/nativo/app/nfsmw_movil.toml" "$app/nfsmw.toml"
 for f in edicion.json nfsmw_shaders.nfsp; do

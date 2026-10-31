@@ -178,6 +178,10 @@
     <string name="tactil_ocultar">隠す</string>
     <string name="tactil_mostrar">タッチ</string>
     <string name="tactil_mando">パッド</string>
+    <!-- El boton del menu principal que cierra el juego y vuelve a la pantalla de inicio,
+         y lo que pone al tocarlo una vez (se toca otra para salir). -->
+    <string name="salir_juego">終了</string>
+    <string name="salir_juego_seguro">本当に？</string>
     <string name="tactil_gestos">指</string>
     <string name="seccion_perfil">Xbox 360 プロフィール</string>
     <string name="gamertag_resumen">ゲームがプロフィールに表示する名前です。変更してもセーブデータは残ります。名前ではなくプロフィール ID で管理されているためです。</string>

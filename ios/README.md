@@ -43,8 +43,9 @@ Objective-C++ y C++: no hace falta Swift ni Xcode.
   iOS deja unos 3 GB y la reserva del juego cabe sin ellos (ver la fase 0). Sin el espacio de
   direcciones ampliado, una ISO de 7-8 GB no cabe mapeada: en iOS se lee con `pread`
   (`nativo/sdk/src/filesystem/devices/disc_image_device.cpp`).
-- **Volver al lanzador es cerrar la app** desde el selector de apps y abrirla otra vez: iOS no deja
-  que una app se cierre sola.
+- **Volver al lanzador es cerrar la app** y abrirla otra vez: el motor no se puede apagar y
+  arrancar de nuevo en el mismo proceso. El botón «Salir» del menú principal (o BACK) la cierra
+  (`_exit`, que Apple no admitiría en la App Store), o se cierra desde el selector de apps.
 - **Buscar servidores por broadcast** pide un permiso de Apple (`multicast`) que una Apple ID
   gratuita no tiene: la búsqueda pregunta a cada IP de la red, como ya hacía Android cuando el router
   se comía los broadcast.
