@@ -575,10 +575,25 @@ final class Ajustes {
     /**
      * present_effect del presentador del SDK: como se lleva la imagen del juego
      * a la pantalla. "bilinear" (el de siempre), "fsr" (AMD FSR 1.0: escalado
-     * con deteccion de bordes y nitidez) o "cas" (AMD CAS: solo nitidez). Los
-     * dos motores.
+     * con deteccion de bordes y nitidez), "cas" (AMD CAS: solo nitidez) o "gsr"
+     * (Snapdragon GSR 1: escalado en una sola pasada) o "gsr2" (Snapdragon GSR 2:
+     * escalado temporal del renderizador nativo en Vulkan, --nfsmw_gsr2). Los
+     * dos de Snapdragon solo en el motor nativo: el de compatibilidad usa FSR.
      */
     String escalado() { return p.getString("escalado", "bilinear"); }
+
+    /**
+     * Generacion de fotogramas de Lossless Scaling (motor nativo, Vulkan): 0 =
+     * apagada, 2/3/4 = fotogramas mostrados por cada uno del juego. Solo si el
+     * usuario ha copiado su Lossless.dll (dllLsfg): no se incluye, es de pago.
+     */
+    int lsfg() { return p.getInt("lsfg", 0); }
+    void lsfg(int v) { p.edit().putInt("lsfg", v).apply(); }
+
+    /** Donde se guarda la copia del Lossless.dll que elige el usuario. */
+    static java.io.File dllLsfg(Context ctx) {
+        return new java.io.File(new java.io.File(ctx.getFilesDir(), "lsfg"), "Lossless.dll");
+    }
     void escalado(String v) { p.edit().putString("escalado", v).apply(); }
 
     /** anisotropic_override del SDK: 0 sin filtro, 2 = 2x, 3 = 4x, 5 = 16x. */
@@ -771,7 +786,8 @@ final class Ajustes {
         // el bufer entero y el compositor de Android lo escala a la vista.
         a.add("--present_letterbox=false");
         a.add("--present_allow_overscan_cutoff=false");
-        a.add("--present_effect=" + escalado());
+        // El SDK de Xenos no tiene GSR: lo mas parecido es FSR.
+        a.add("--present_effect=" + (escalado().startsWith("gsr") ? "fsr" : escalado()));
         a.add("--vulkan_sparse_shared_memory=false");
         a.add("--fullscreen=true");
         a.add("--resolution_scale=" + escala());

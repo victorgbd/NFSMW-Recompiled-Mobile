@@ -80,6 +80,9 @@ class GlesPresenter final : public Presenter {
 
   Surface::TypeFlags GetSupportedSurfaceTypes() const override;
   bool CaptureGuestOutput(RawImage& image_out) override;
+#if defined(REX_HAS_FIDELITYFX_SDK)
+  bool SupportsGsrEffect() const override { return true; }
+#endif
 
  protected:
   SurfacePaintConnectResult ConnectOrReconnectPaintingToSurfaceFromUIThread(

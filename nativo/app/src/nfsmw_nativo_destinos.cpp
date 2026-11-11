@@ -35,6 +35,10 @@
 #include "nfsmw_nativo_captura.h"   // GuardarPng (nfsmw_volcado)
 
 #include "nfsmw_ajustes_graficos.h"
+#include "nfsmw_gsr2.h"  // Snapdragon GSR 2 in the output (nfsmw_gsr2)
+#if NFSMW_LSFG
+#include "nfsmw_lsfg.h"  // Lossless Scaling frame generation (nfsmw_lsfg)
+#endif
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
@@ -721,6 +725,26 @@ struct Resuelta {
   uint64_t lecturas = 0;
 };
 
+// nfsmw_gsr2: one resolve of the frame (Copiar), to find the scene, the composited scene before the HUD and the
+// depth target when presenting.
+struct ResolucionFotograma {
+  uint32_t destino = 0;      // resolved texture address
+  uint64_t origen = 0;       // render target key (base, format, pitch), as in destinos_
+  uint32_t pitch = 0;
+  uint32_t info_profundidad = 0;  // RB_DEPTH_INFO at that moment
+  int32_t x0 = 0, y0 = 0, x1 = 0, y1 = 0;  // the copied rectangle of the render target
+  uint32_t ancho = 0, alto = 0;  // the resolved texture's size
+  bool intercambio_rb = false;
+};
+constexpr size_t kResolucionesFotogramaMax = 64;
+
+// nfsmw_gsr2: what Presentar hands PintarSalida (the color image and its size are filled in there).
+struct PlanGsr2 {
+  bool activo = false;
+  uint32_t ancho_salida = 0, alto_salida = 0;
+  nfsmw::gsr2::EntradasVulkan entradas;
+};
+
 // C2 report of readbacks per render target (base and size) and cadence of nfsmw_nativo_lecturas_cada.
 struct DestinoLectura {
   uint32_t base = 0;
@@ -846,6 +870,10 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
 
   ~DestinosVulkan() override {
     EsperarGpu();
+#if NFSMW_LSFG
+    lsfg_.reset();     // stops its pacing thread; uses the output pass's objects
+#endif
+    gsr2_.reset();     // waits for the outputs; uses vs_ and sampler_
     dibujos_.reset();  // their framebuffers and views point to these images
     for (auto& [clave, imagen] : profundidades_) {
       Destruir(imagen);
@@ -1282,6 +1310,22 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
     }
     REXLOG_INFO("[nativo] C2: rampa de gamma del juego en la salida (nfsmw_nativo_rampa_gamma) = {}",
                 rampa_gamma_ ? "SI" : "no");
+    if (nfsmw::gsr2::Activo()) {
+      gsr2_ = nfsmw::gsr2::Gsr2Vulkan::Crear(
+          dispositivo_, vs_, sampler_, kRanurasSalida,
+          [](void* yo) { static_cast<DestinosVulkan*>(yo)->EsperarSalidas(); }, this);
+    }
+#if NFSMW_LSFG
+    if (nfsmw::lsfg::Activo()) {
+      nfsmw::lsfg::RecursosSalida recursos;
+      recursos.render_pass_salida = render_pass_salida_;
+      recursos.pipeline_bilineal = pipeline_;
+      recursos.layout_pipeline = layout_pipeline_;
+      recursos.layout_descriptores = layout_descriptores_;
+      recursos.vs = vs_;
+      lsfg_ = nfsmw::lsfg::LsfgVulkan::Crear(dispositivo_, recursos);
+    }
+#endif
     // Parts C3-C6: without the required capabilities only copies and presentation remain.
     dibujos_ = DibujosVulkan::Crear(dispositivo_, memoria_, this);
     return true;
@@ -1502,6 +1546,22 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
             DiagEscritura(base & 0x1FFFFFFF, info_color & 0xFFF, pitch, x0, y0, uint32_t(x1 - x0), uint32_t(y1 - y0),
                           resuelta->imagen.ancho, resuelta->imagen.alto, dibujos_antes, false);
           }
+        }
+        if (resuelta && gsr2_ && resoluciones_fotograma_.size() < kResolucionesFotogramaMax) {
+          // nfsmw_gsr2: which resolve is the scene, which the composited scene before the HUD, and their depth.
+          ResolucionFotograma r;
+          r.destino = base & 0x1FFFFFFF;
+          r.origen = (uint64_t(info_color & 0xFFF) << 20) | (uint64_t(formato_color) << 16) | pitch;
+          r.pitch = pitch;
+          r.info_profundidad = reg.rb_depth_info;
+          r.x0 = x0;
+          r.y0 = y0;
+          r.x1 = x1;
+          r.y1 = y1;
+          r.ancho = resuelta->imagen.ancho;
+          r.alto = resuelta->imagen.alto;
+          r.intercambio_rb = resuelta->intercambio_rb;
+          resoluciones_fotograma_.push_back(r);
         }
         if (resuelta && REXCVAR_GET(nfsmw_nativo_diag_resueltas) &&
             resueltas_fotograma_.size() < 64 &&
@@ -2145,6 +2205,10 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
     // holds the content (no copy) or the deferred copy is recorded now, ahead of the output.
     Imagen* const origen_frontal = FrontalAlPresentar(base, ancho, alto);
     VolcadoAlPresentar(base, origen_frontal);  // nfsmw_volcado
+    // nfsmw_gsr2: what the upscaler needs from this frame's resolves (before forgetting them).
+    PlanGsr2 plan_gsr2;
+    PrepararGsr2(presentador, base, origen_frontal != nullptr, plan_gsr2);
+    resoluciones_fotograma_.clear();
     const bool mosaico =
         presentador && REXCVAR_GET(nfsmw_nativo_diag_resueltas) && ComponerMosaico(base);
     // Without waiting for the GPU: the output goes after the work on the same queue.
@@ -2157,7 +2221,7 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
           1280, 720, 1280, 720, [&](rex::ui::Presenter::GuestOutputRefreshContext& base_contexto) {
             auto& contexto =
                 static_cast<VulkanPresenter::VulkanGuestOutputRefreshContext&>(base_contexto);
-            pintado_mosaico = PintarSalida(contexto, mosaico_, 1280, 720);
+            pintado_mosaico = PintarSalida(&contexto, mosaico_, 1280, 720);
             return pintado_mosaico;
           });
       if (pintado_mosaico) {
@@ -2182,18 +2246,54 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
     bool llamada = false;
     // The display proportion: 16:9, or the front buffer's own when it is wider (nfsmw_proporcion_pantalla).
     const bool mas_ancha = uint64_t(w) * 9 > uint64_t(h) * 16 + h;
-    presentador->RefreshGuestOutput(
-        w, h, mas_ancha ? w : 1280, mas_ancha ? h : 720,
+    // nfsmw_gsr2: the presenter's image gets the screen's size and GSR 2 fills it, if the frame is smaller. With
+    // the display proportion: the largest rectangle of that proportion inside the screen (with letterboxing, as
+    // on iOS, the presenter would otherwise shrink it again; on Android the view already has that proportion).
+    if (plan_gsr2.activo) {
+      const uint64_t px = mas_ancha ? w : 1280, py = mas_ancha ? h : 720;
+      if (uint64_t(plan_gsr2.ancho_salida) * py > uint64_t(plan_gsr2.alto_salida) * px) {
+        plan_gsr2.ancho_salida = uint32_t(uint64_t(plan_gsr2.alto_salida) * px / py);
+      } else {
+        plan_gsr2.alto_salida = uint32_t(uint64_t(plan_gsr2.ancho_salida) * py / px);
+      }
+    }
+    const bool con_gsr2 = plan_gsr2.activo && (plan_gsr2.ancho_salida > w || plan_gsr2.alto_salida > h);
+    bool con_lsfg = false;
+#if NFSMW_LSFG
+    // nfsmw_lsfg: the frame goes into LSFG's image instead of the presenter's; LSFG's pacing thread presents it
+    // after the generated ones.
+    VkImageView vista_cuadro = VK_NULL_HANDLE;
+    uint64_t version_cuadro = 0;
+    if (lsfg_ && lsfg_->PrepararCuadro(con_gsr2 ? plan_gsr2.ancho_salida : w, con_gsr2 ? plan_gsr2.alto_salida : h,
+                                       vista_cuadro, version_cuadro)) {
+      con_lsfg = true;
+      entrada_llamada = std::chrono::steady_clock::now();
+      llamada = true;
+      pintado = PintarSalida(nullptr, origen_frontal ? *origen_frontal : resuelta.imagen, w, h,
+                             origen_frontal != nullptr, con_gsr2 ? &plan_gsr2 : nullptr, vista_cuadro, version_cuadro);
+      salida_llamada = std::chrono::steady_clock::now();
+      if (pintado) {
+        lsfg_->Generar(presentador, mas_ancha ? w : 1280, mas_ancha ? h : 720);
+      }
+    }
+#endif
+    if (!con_lsfg) presentador->RefreshGuestOutput(
+        con_gsr2 ? plan_gsr2.ancho_salida : w, con_gsr2 ? plan_gsr2.alto_salida : h, mas_ancha ? w : 1280,
+        mas_ancha ? h : 720,
         [&](rex::ui::Presenter::GuestOutputRefreshContext& base_contexto) {
           entrada_llamada = std::chrono::steady_clock::now();
           llamada = true;
           auto& contexto =
               static_cast<VulkanPresenter::VulkanGuestOutputRefreshContext&>(base_contexto);
-          pintado = PintarSalida(contexto, origen_frontal ? *origen_frontal : resuelta.imagen, w, h,
-                                 origen_frontal != nullptr);  // nfsmw_nativo_frontal_perezoso
+          pintado = PintarSalida(&contexto, origen_frontal ? *origen_frontal : resuelta.imagen, w, h,
+                                 origen_frontal != nullptr,  // nfsmw_nativo_frontal_perezoso
+                                 con_gsr2 ? &plan_gsr2 : nullptr);
           salida_llamada = std::chrono::steady_clock::now();
           return pintado;
         });
+    if (gsr2_) {
+      nfsmw::gsr2::AnotarUso(con_gsr2 && llamada && ultimo_gsr2_hecho_);  // the game jitters only while it upscales
+    }
     if (llamada) {
       ns_antes_llamada_ += Ns(antes_refresco, entrada_llamada);
       ns_en_llamada_ += Ns(entrada_llamada, salida_llamada);
@@ -5738,8 +5838,87 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
   // desde_destino = the source is a render target's image (or a retained one) with the front buffer in its
   // corner and larger than the output (nfsmw_nativo_frontal_perezoso). Only requested with the exact variant
   // and without FXAA.
-  bool PintarSalida(VulkanPresenter::VulkanGuestOutputRefreshContext& contexto, Imagen& origen,
-                    uint32_t ancho, uint32_t alto, bool desde_destino = false) {
+  // nfsmw_gsr2: the frame's resolves -> what GSR 2 needs (plan.activo = false if something is missing).
+  void PrepararGsr2(rex::ui::Presenter* presentador, uint32_t base, bool desde_destino, PlanGsr2& plan) {
+    plan = PlanGsr2{};
+    if (!gsr2_ || !presentador || resoluciones_fotograma_.empty()) {
+      return;
+    }
+    presentador->GetPaintSurfaceSize(plan.ancho_salida, plan.alto_salida);
+    if (!plan.ancho_salida || !plan.alto_salida) {
+      return;
+    }
+    // The resolve that made the front buffer (the last one to that address).
+    size_t f = resoluciones_fotograma_.size();
+    for (size_t i = resoluciones_fotograma_.size(); i-- > 0;) {
+      if (resoluciones_fotograma_[i].destino == base) {
+        f = i;
+        break;
+      }
+    }
+    if (f == resoluciones_fotograma_.size()) {
+      return;
+    }
+    const ResolucionFotograma& frontal = resoluciones_fotograma_[f];
+    // The depth bound when that render target was resolved for the first time this frame (the scene).
+    uint32_t info_profundidad = frontal.info_profundidad;
+    for (size_t i = 0; i <= f; ++i) {
+      if (resoluciones_fotograma_[i].origen == frontal.origen) {
+        info_profundidad = resoluciones_fotograma_[i].info_profundidad;
+        break;
+      }
+    }
+    const uint64_t clave_profundidad = (uint64_t(info_profundidad & 0xFFF) << 20) |
+                                       (uint64_t((info_profundidad >> 16) & 0x1) << 16) | frontal.pitch;
+    const auto it_profundidad = profundidades_.find(clave_profundidad);
+    if (it_profundidad == profundidades_.end() || !it_profundidad->second.preparada ||
+        it_profundidad->second.contenido_invalido) {
+      if (!avisado_gsr2_sin_profundidad_) {
+        avisado_gsr2_sin_profundidad_ = true;
+        REXLOG_INFO("[gsr2] sin destino de profundidad para la escena (RB_DEPTH_INFO {:08X}, pitch {}): ese "
+                    "fotograma se presenta como siempre",
+                    info_profundidad, frontal.pitch);
+      }
+      return;
+    }
+    const Imagen& profundidad = it_profundidad->second;
+    nfsmw::gsr2::EntradasVulkan& e = plan.entradas;
+    e.profundidad = profundidad.imagen;
+    e.formato_profundidad = profundidad.formato;
+    e.profundidad_ancho = profundidad.ancho;
+    e.profundidad_alto = profundidad.alto;
+    e.rect_profundidad[0] = float(frontal.x0);
+    e.rect_profundidad[1] = float(frontal.y0);
+    e.rect_profundidad[2] = float(frontal.x1);
+    e.rect_profundidad[3] = float(frontal.y1);
+    // The composited scene before the HUD: the last earlier resolve of the same render target, the same size,
+    // to another texture (sub_82442478).
+    for (size_t i = f; i-- > 0;) {
+      const ResolucionFotograma& r = resoluciones_fotograma_[i];
+      if (r.origen != frontal.origen || r.destino == base || r.ancho != frontal.ancho || r.alto != frontal.alto) {
+        continue;
+      }
+      const auto it = resueltas_.find(r.destino);
+      if (it != resueltas_.end() && it->second.imagen.preparada && it->second.imagen.ancho == frontal.ancho &&
+          it->second.imagen.alto == frontal.alto) {
+        e.escena = it->second.imagen.vista;
+        e.escena_rb = it->second.intercambio_rb != (desde_destino ? false : frontal.intercambio_rb);
+      }
+      break;
+    }
+    plan.activo = true;
+  }
+
+  // contexto: the presenter's image to draw into; or nullptr and vista_propia / version_propia, an image of the
+  // output pass's format with a version unique to it (nfsmw_lsfg).
+  bool PintarSalida(VulkanPresenter::VulkanGuestOutputRefreshContext* contexto, Imagen& origen,
+                    uint32_t ancho, uint32_t alto, bool desde_destino = false, PlanGsr2* plan = nullptr,
+                    VkImageView vista_propia = VK_NULL_HANDLE, uint64_t version_propia = 0) {
+    const uint64_t version_destino = contexto ? contexto->image_version() : version_propia;
+    const VkImageView vista_destino = contexto ? contexto->image_view() : vista_propia;
+    // nfsmw_gsr2: with a plan, the output (the presenter's image) has the screen's size.
+    const uint32_t ancho_salida = plan ? plan->ancho_salida : ancho;
+    const uint32_t alto_salida = plan ? plan->alto_salida : alto;
     // With nfsmw_nativo_salida_sin_espera, the next of 3 slots, and it only waits if that one is still pending.
     // Without it, always slot 0: it waits for the previous output.
     const uint32_t s = salida_sin_espera_ ? (salida_actual_ + 1) % kRanurasSalida : 0;
@@ -5778,7 +5957,7 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
     }
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
     for (const auto& f : framebuffers_) {
-      if (f.framebuffer != VK_NULL_HANDLE && f.version == contexto.image_version()) {
+      if (f.framebuffer != VK_NULL_HANDLE && f.version == version_destino) {
         framebuffer = f.framebuffer;
       }
     }
@@ -5790,34 +5969,22 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
         dfn_.vkDestroyFramebuffer(device_, f.framebuffer, nullptr);
         f.framebuffer = VK_NULL_HANDLE;
       }
-      VkImageView vista = contexto.image_view();
+      VkImageView vista = vista_destino;
       VkFramebufferCreateInfo info{};
       info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
       info.renderPass = render_pass_salida_;
       info.attachmentCount = 1;
       info.pAttachments = &vista;
-      info.width = ancho;
-      info.height = alto;
+      info.width = ancho_salida;
+      info.height = alto_salida;
       info.layers = 1;
       if (dfn_.vkCreateFramebuffer(device_, &info, nullptr, &f.framebuffer) != VK_SUCCESS) {
         f.framebuffer = VK_NULL_HANDLE;
         return false;
       }
-      f.version = contexto.image_version();
+      f.version = version_destino;
       framebuffer = f.framebuffer;
     }
-
-    VkDescriptorImageInfo info_imagen{};
-    info_imagen.imageView = origen.vista;
-    info_imagen.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    VkWriteDescriptorSet escritura{};
-    escritura.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    escritura.dstSet = descriptores_salida_[s];
-    escritura.dstBinding = 0;
-    escritura.descriptorCount = 1;
-    escritura.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    escritura.pImageInfo = &info_imagen;
-    dfn_.vkUpdateDescriptorSets(device_, 1, &escritura, 0, nullptr);
 
     dfn_.vkResetCommandPool(device_, pools_salida_[s], 0);
     VkCommandBufferBeginInfo inicio{};
@@ -5830,7 +5997,7 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
     pase.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     pase.renderPass = render_pass_salida_;
     pase.framebuffer = framebuffer;
-    pase.renderArea.extent = {ancho, alto};
+    pase.renderArea.extent = {ancho_salida, alto_salida};
     BarreraTotal(dfn_, comandos_salida_[s]);  // nfsmw_nativo_barrera_total (iOS)
     if (desde_destino) {
       // That image was just written as a render target (or copy destination) in the frame's work, which goes in
@@ -5843,10 +6010,40 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
                                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &barrera, 0, nullptr, 0, nullptr);
     }
+    // nfsmw_gsr2: both passes before the output pass, which then reads the upscaled image 1 to 1.
+    VkImageView vista_fuente = origen.vista;
+    uint32_t fuente_ancho = origen.ancho, fuente_alto = origen.alto;
+    bool gsr2_hecho = false;
+    if (plan && gsr2_) {
+      plan->entradas.color = origen.vista;
+      plan->entradas.ancho = ancho;
+      plan->entradas.alto = alto;
+      const VkImageView escalada = gsr2_->Grabar(comandos_salida_[s], s, plan->entradas, ancho_salida, alto_salida,
+                                                 nfsmw::gsr2::CamaraDelSwap());
+      if (escalada != VK_NULL_HANDLE) {
+        vista_fuente = escalada;
+        fuente_ancho = ancho_salida;
+        fuente_alto = alto_salida;
+        gsr2_hecho = true;
+      }
+    }
+    ultimo_gsr2_hecho_ = gsr2_hecho;
+    VkDescriptorImageInfo info_imagen{};
+    info_imagen.imageView = vista_fuente;
+    info_imagen.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkWriteDescriptorSet escritura{};
+    escritura.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    escritura.dstSet = descriptores_salida_[s];
+    escritura.dstBinding = 0;
+    escritura.descriptorCount = 1;
+    escritura.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    escritura.pImageInfo = &info_imagen;
+    dfn_.vkUpdateDescriptorSets(device_, 1, &escritura, 0, nullptr);
+
     dfn_.vkCmdBeginRenderPass(comandos_salida_[s], &pase, VK_SUBPASS_CONTENTS_INLINE);
-    const VkViewport viewport{0.0f, 0.0f, float(ancho), float(alto), 0.0f, 1.0f};
+    const VkViewport viewport{0.0f, 0.0f, float(ancho_salida), float(alto_salida), 0.0f, 1.0f};
     dfn_.vkCmdSetViewport(comandos_salida_[s], 0, 1, &viewport);
-    const VkRect2D tijera{{0, 0}, {ancho, alto}};
+    const VkRect2D tijera{{0, 0}, {ancho_salida, alto_salida}};
     dfn_.vkCmdSetScissor(comandos_salida_[s], 0, 1, &tijera);
     VkPipeline pipeline = pipeline_;
     if (rampa_gamma_) {
@@ -5854,8 +6051,11 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
       // From a render target, the output has the front buffer's size, not the image's, and has no FXAA
       // (FrontalAlPresentar only requests it that way): texelFetch of the pixel, the same texel the texture
       // would hold.
-      const bool exacta = desde_destino || (ancho == origen.ancho && alto == origen.alto);
-      const bool fxaa = !desde_destino && nfsmw::ajustes::AntialiasingFxaa();
+      // With GSR 2 the upscaled image has the output's size and is already antialiased (no FXAA). With a GSR 2
+      // plan that could not run, the output is larger than the frame: bilinear.
+      const bool exacta = gsr2_hecho || (desde_destino && !plan) ||
+                          (ancho_salida == fuente_ancho && alto_salida == fuente_alto);
+      const bool fxaa = !desde_destino && !gsr2_hecho && nfsmw::ajustes::AntialiasingFxaa();
       if (fxaa != fxaa_anotado_) {
         fxaa_anotado_ = fxaa;
         REXLOG_INFO("[nativo] C2: antialiasing en la salida: {}", fxaa ? "FXAA" : "ninguno");
@@ -5866,8 +6066,8 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
       }
       if (!exacta && !avisado_rampa_bilineal_) {
         avisado_rampa_bilineal_ = true;
-        REXLOG_INFO("[nativo] C2: salida de {}x{} desde un origen de {}x{}: rampa con muestreo bilineal", ancho,
-                    alto, origen.ancho, origen.alto);
+        REXLOG_INFO("[nativo] C2: salida de {}x{} desde un origen de {}x{}: rampa con muestreo bilineal",
+                    ancho_salida, alto_salida, fuente_ancho, fuente_alto);
       }
     }
     dfn_.vkCmdBindPipeline(comandos_salida_[s], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
@@ -5879,12 +6079,17 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
     struct {
       int32_t desplazamiento[2];
       float inverso[2];
-    } bilineal = {{0, 0}, {1.0f / float(ancho), 1.0f / float(alto)}};
+    } bilineal = {{0, 0}, {1.0f / float(ancho_salida), 1.0f / float(alto_salida)}};
     dfn_.vkCmdPushConstants(comandos_salida_[s], layout_pipeline_, VK_SHADER_STAGE_FRAGMENT_BIT, 16,
                             sizeof(bilineal), &bilineal);
     dfn_.vkCmdDraw(comandos_salida_[s], 4, 1, 0, 0);
     dfn_.vkCmdEndRenderPass(comandos_salida_[s]);
-    if (desde_destino) {
+    if (gsr2_hecho) {
+      // The next frame's work writes again what GSR 2 read (color, depth, the copy) and the next output the
+      // other history image: after this one has read them.
+      dfn_.vkCmdPipelineBarrier(comandos_salida_[s], VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 0, nullptr);
+    } else if (desde_destino) {
       // And nothing submitted later (the next frame draws and clears that image again) writes it before the
       // output has read it.
       dfn_.vkCmdPipelineBarrier(comandos_salida_[s], VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
@@ -5910,7 +6115,9 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
       ++envios_salida_;
     }
     salidas_pendientes_[s] = true;
-    contexto.SetIs8bpc(true);
+    if (contexto) {
+      contexto->SetIs8bpc(true);
+    }
     return true;
   }
 
@@ -6132,6 +6339,14 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
   std::unordered_map<uint64_t, Imagen> profundidades_;
 
   VkSampler sampler_ = VK_NULL_HANDLE;
+  // nfsmw_gsr2: the upscaler (only with the cvar) and this frame's resolves (Copiar -> Presentar).
+  std::unique_ptr<nfsmw::gsr2::Gsr2Vulkan> gsr2_;
+#if NFSMW_LSFG
+  std::unique_ptr<nfsmw::lsfg::LsfgVulkan> lsfg_;  // nfsmw_lsfg (only with the cvar and Lossless.dll)
+#endif
+  std::vector<ResolucionFotograma> resoluciones_fotograma_;
+  bool avisado_gsr2_sin_profundidad_ = false;
+  bool ultimo_gsr2_hecho_ = false;  // PintarSalida -> Presentar
   VkDescriptorSetLayout layout_descriptores_ = VK_NULL_HANDLE;
   VkPipelineLayout layout_pipeline_ = VK_NULL_HANDLE;
   VkDescriptorPool pool_descriptores_ = VK_NULL_HANDLE;

@@ -241,6 +241,9 @@ class Presenter {
       // where available; currently still experimental due to limited temporal
       // inputs in the presenter path.
       kFsr3,
+      // Snapdragon Game Super Resolution 1: one spatial pass straight to the output size (edge-directed Lanczos
+      // with its own sharpening). Only where SupportsGsrEffect(); elsewhere it is painted like kFsr.
+      kGsr,
 #endif
     };
 
@@ -374,6 +377,13 @@ class Presenter {
   bool RefreshGuestOutput(uint32_t frontbuffer_width, uint32_t frontbuffer_height,
                           uint32_t display_aspect_ratio_x, uint32_t display_aspect_ratio_y,
                           std::function<bool(GuestOutputRefreshContext& context)> refresher);
+  // The size of the surface painting is connected to (0 x 0 if none). Any thread: the guest output refresher
+  // uses it to produce an image of the screen's size (nfsmw_gsr2).
+  void GetPaintSurfaceSize(uint32_t& width_out, uint32_t& height_out) const {
+    width_out = paint_surface_width_.load(std::memory_order_relaxed);
+    height_out = paint_surface_height_.load(std::memory_order_relaxed);
+  }
+
   // The implementation must be callable from any thread, including from
   // multiple at the same time, and it should acquire the latest guest output
   // image via ConsumeGuestOutput.
@@ -461,6 +471,8 @@ class Presenter {
     kFsrEasu,
     kFsrRcas,
     kFsrRcasDither,
+    // Snapdragon GSR 1 (sdk/src/ui/shaders/fuentes/guest_output_sgsr1_ps.frag).
+    kSgsr1,
 #endif
 
     kCount,
@@ -641,6 +653,27 @@ class Presenter {
       sharpness_post_setup = CalculatePostSetupSharpness(config.GetFsrSharpnessReduction());
     }
   };
+
+  struct GsrConstants {
+    int32_t output_offset[2];
+    float output_size_inv[2];
+    // The shader's ViewportInfo: 1 / input size, then the input size.
+    float input_size_inv[2];
+    float input_size[2];
+
+    void Initialize(const GuestOutputPaintFlow& flow, size_t effect_index) {
+      flow.GetEffectOutputOffset(effect_index, output_offset[0], output_offset[1]);
+      const std::pair<uint32_t, uint32_t>& output_size = flow.effect_output_sizes[effect_index];
+      output_size_inv[0] = 1.0f / float(output_size.first);
+      output_size_inv[1] = 1.0f / float(output_size.second);
+      uint32_t input_width, input_height;
+      flow.GetEffectInputSize(effect_index, input_width, input_height);
+      input_size_inv[0] = 1.0f / float(input_width);
+      input_size_inv[1] = 1.0f / float(input_height);
+      input_size[0] = float(input_width);
+      input_size[1] = float(input_height);
+    }
+  };
 #endif  // defined(REX_HAS_FIDELITYFX_SDK)
 
   explicit Presenter(HostGpuLossCallback host_gpu_loss_callback)
@@ -705,6 +738,9 @@ class Presenter {
                                                uint32_t host_rt_width, uint32_t host_rt_height,
                                                uint32_t max_rt_width, uint32_t max_rt_height,
                                                const GuestOutputPaintConfig& config) const;
+  // Whether the implementation has the GuestOutputPaintEffect::kSgsr1 shader (Vulkan and GLES; not D3D12, which
+  // paints Effect::kGsr as FSR).
+  virtual bool SupportsGsrEffect() const { return false; }
   // is_8bpc_out_ref is where to write whether the source actually has no more
   // than 8 bits of precision per channel (though the image provided by the
   // refresher may still have a higher storage precision) - if not written, it
@@ -1025,6 +1061,9 @@ class Presenter {
   // painting.
   uint32_t surface_width_in_paint_connection_ = 0;
   uint32_t surface_height_in_paint_connection_ = 0;
+  // Copies of the two above for GetPaintSurfaceSize from other threads.
+  std::atomic<uint32_t> paint_surface_width_{0};
+  std::atomic<uint32_t> paint_surface_height_{0};
 
   // Can be set by both the UI thread and the guest output thread before doing
   // window_->RequestPaint() - whether an extra painting (preceded by

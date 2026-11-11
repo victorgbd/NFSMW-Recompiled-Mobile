@@ -31,6 +31,8 @@
 #include <rex/hook.h>
 #include <rex/logging.h>
 
+#include "nfsmw_gsr2.h"
+
 REXCVAR_DEFINE_INT32(nfsmw_sombras_cada, 1, "NFSMW",
                      "Actualizar los mapas de sombras 1 de cada N fotogramas (1 = como el juego)")
     .range(1, 8);
@@ -577,9 +579,11 @@ void SalirUpdate();
 REX_EXTERN(__imp__sub_8243EC28);
 REX_HOOK_RAW(sub_8243EC28) {
   const uint32_t vista = ctx.r4.u32;  // r4 may be clobbered inside: save it first
-  nfsmw::panoramico::EntrarUpdate(ctx.r3.u32);
+  const uint32_t bloque = ctx.r3.u32;
+  nfsmw::panoramico::EntrarUpdate(bloque);
   __imp__sub_8243EC28(ctx, base);
   nfsmw::panoramico::SalirUpdate();
+  nfsmw::gsr2::TrasUpdate(base, vista, bloque);  // nfsmw_gsr2: view 1's camera for this frame
   nfsmw::escena_detalle::Aplicar(base, vista);
 }
 

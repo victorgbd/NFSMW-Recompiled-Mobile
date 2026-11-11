@@ -226,7 +226,21 @@ final class MotorNativo {
         a.add("--present_letterbox=false");
         a.add("--present_safe_area_x=100");
         a.add("--present_safe_area_y=100");
-        a.add("--present_effect=" + ajustes.escalado());
+        // Generacion de fotogramas de Lossless Scaling, con el Lossless.dll del usuario.
+        java.io.File dll = Ajustes.dllLsfg(ctx);
+        if (ajustes.lsfg() >= 2 && dll.isFile()) {
+            a.add("--nfsmw_lsfg=true");
+            a.add("--nfsmw_lsfg_dll=" + dll.getAbsolutePath());
+            a.add("--nfsmw_lsfg_multiplicador=" + ajustes.lsfg());
+        }
+        // GSR 2 lo hace el renderizador nativo y entrega la imagen ya al tamano de
+        // la pantalla: el presentador solo la copia.
+        if ("gsr2".equals(ajustes.escalado())) {
+            a.add("--present_effect=bilinear");
+            a.add("--nfsmw_gsr2=true");
+        } else {
+            a.add("--present_effect=" + ajustes.escalado());
+        }
 
         // Graficos y sonido
         // Solo si no es la de siempre: las libmain de las otras ediciones (app_<edicion>) no

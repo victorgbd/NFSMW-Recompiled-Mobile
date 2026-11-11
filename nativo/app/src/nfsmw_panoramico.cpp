@@ -37,6 +37,8 @@
 #include <rex/hook.h>
 #include <rex/logging.h>
 
+#include "nfsmw_gsr2.h"
+
 namespace nfsmw::render_targets {
 bool Panoramico();
 uint32_t AnchoPanoramico();
@@ -148,6 +150,9 @@ REX_HOOK_RAW(sub_8243EB70) {
   if (desde_update && nfsmw::render_targets::Panoramico()) {
     const double k = nfsmw::panoramico::Corregir(base, vista, proyeccion, "camara");
     ctx.f1.f64 /= k;  // H as at 16:9: the same LOD and culling distances
+  }
+  if (desde_update) {
+    nfsmw::gsr2::AjustarProyeccion(base, vista, proyeccion);  // nfsmw_gsr2: the frame's jitter
   }
 }
 

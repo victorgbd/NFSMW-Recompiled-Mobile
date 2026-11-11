@@ -644,7 +644,14 @@ std::vector<std::string> Argumentos(const Juego& j, const Edicion& edicion, cons
   poner(@"--present_allow_overscan_cutoff=false");
   poner(@"--present_safe_area_x=100");
   poner(@"--present_safe_area_y=100");
-  poner([@"--present_effect=" stringByAppendingString:LeerTexto(@"escalado", @"bilinear")]);
+  // GSR 2 lo hace el renderizador nativo y entrega la imagen al tamano de la pantalla.
+  NSString* escalado = LeerTexto(@"escalado", @"bilinear");
+  if ([escalado isEqualToString:@"gsr2"]) {
+    poner(@"--present_effect=bilinear");
+    poner(@"--nfsmw_gsr2=true");
+  } else {
+    poner([@"--present_effect=" stringByAppendingString:escalado]);
+  }
   if (panoramico) {
     poner([NSString stringWithFormat:@"--nfsmw_proporcion_pantalla=%.4f", ProporcionPantalla()]);
   }
@@ -1539,7 +1546,9 @@ NSString* Tamano(uint64_t bytes) {
     Selector(T(@"suavizado"), T(@"suavizado_resumen"), @[T(@"aa_no"), T(@"aa_fxaa")], @[AA_NO, AA_FXAA],
              Antialiasing(), true, guardar(@"antialiasing")),
     Selector(T(@"escalado"), T(@"escalado_resumen"),
-             @[T(@"escalado_bilineal"), T(@"escalado_fsr"), T(@"escalado_cas")], @[@"bilinear", @"fsr", @"cas"],
+             @[T(@"escalado_bilineal"), T(@"escalado_fsr"), T(@"escalado_cas"), T(@"escalado_gsr"),
+               T(@"escalado_gsr2")],
+             @[@"bilinear", @"fsr", @"cas", @"gsr", @"gsr2"],
              LeerTexto(@"escalado", @"bilinear"), false, guardar(@"escalado")),
     Selector(T(@"anisotropico"), T(@"anisotropico_resumen"), @[T(@"aniso_no"), T(@"aniso_2"), T(@"aniso_4"), T(@"aniso_16")],
              @[@0, @2, @3, @5], @(LeerInt(@"anisotropico", 3)), true, guardar(@"anisotropico")),

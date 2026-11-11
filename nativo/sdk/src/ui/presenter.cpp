@@ -163,8 +163,8 @@ REXCVAR_DEFINE_INT32(present_safe_area_y, 90, "UI/Presenter",
 
 #if defined(REX_HAS_FIDELITYFX_SDK)
 REXCVAR_DEFINE_STRING(present_effect, "bilinear", "UI/Presenter",
-                      "Guest output effect: bilinear, cas, fsr, fsr2, fsr3")
-    .allowed({"bilinear", "cas", "fsr", "fsr2", "fsr3"})
+                      "Guest output effect: bilinear, cas, fsr, fsr2, fsr3, gsr (Snapdragon GSR 1)")
+    .allowed({"bilinear", "cas", "fsr", "fsr2", "fsr3", "gsr"})
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
 REXCVAR_DEFINE_DOUBLE(present_cas_additional_sharpness,
@@ -225,6 +225,9 @@ GuestOutputPaintConfig::Effect ParsePresentEffect(const std::string& effect_name
   }
   if (lowered == "fsr3") {
     return GuestOutputPaintConfig::Effect::kFsr3;
+  }
+  if (lowered == "gsr") {
+    return GuestOutputPaintConfig::Effect::kGsr;
   }
 #endif
   return GuestOutputPaintConfig::Effect::kBilinear;
@@ -993,8 +996,16 @@ std::unique_lock<std::mutex> Presenter::ConsumeGuestOutput(
 
 Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
     const GuestOutputProperties& properties, uint32_t host_rt_width, uint32_t host_rt_height,
-    uint32_t max_rt_width, uint32_t max_rt_height, const GuestOutputPaintConfig& config) const {
+    uint32_t max_rt_width, uint32_t max_rt_height, const GuestOutputPaintConfig& config_in) const {
   GuestOutputPaintFlow flow = {};
+
+  GuestOutputPaintConfig config = config_in;
+#if defined(REX_HAS_FIDELITYFX_SDK)
+  // Without the GSR shader (D3D12), the closest spatial upscaler.
+  if (config.GetEffect() == GuestOutputPaintConfig::Effect::kGsr && !SupportsGsrEffect()) {
+    config.SetEffect(GuestOutputPaintConfig::Effect::kFsr);
+  }
+#endif
 
   // FIXME(Triang3l): Configuration variables racing with per-game config
   // loading.
@@ -1172,6 +1183,25 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
   uint32_t output_height_clamped = std::min(output_height, max_rt_height);
 
 #if defined(REX_HAS_FIDELITYFX_SDK)
+  if (config.GetEffect() == GuestOutputPaintConfig::Effect::kGsr) {
+    // Snapdragon GSR 1 samples only the 4x4 texels around each output pixel, so a single pass goes straight to the
+    // output size (clamped to the render target limit; the bilinear stretch below covers the rest). Without
+    // upscaling it would only sharpen edges: then it is left out, like the bilinear path.
+    std::pair<uint32_t, uint32_t> gsr_input_size;
+    if (flow.effect_count) {
+      gsr_input_size = flow.effect_output_sizes[flow.effect_count - 1];
+    } else {
+      gsr_input_size.first = properties.frontbuffer_width;
+      gsr_input_size.second = properties.frontbuffer_height;
+    }
+    if (gsr_input_size.first < output_width_clamped ||
+        gsr_input_size.second < output_height_clamped) {
+      assert_true(flow.effect_count < flow.effects.size());
+      flow.effect_output_sizes[flow.effect_count] =
+          std::make_pair(output_width_clamped, output_height_clamped);
+      flow.effects[flow.effect_count++] = GuestOutputPaintEffect::kSgsr1;
+    }
+  }
   if (config.GetEffect() == GuestOutputPaintConfig::Effect::kCas ||
       config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr ||
       config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr2 ||
@@ -1493,6 +1523,8 @@ void Presenter::DisconnectPaintingFromSurfaceFromUIThread(SurfacePaintConnection
   surface_paint_connection_has_implicit_vsync_ = false;
   surface_width_in_paint_connection_ = 0;
   surface_height_in_paint_connection_ = 0;
+  paint_surface_width_.store(0, std::memory_order_relaxed);
+  paint_surface_height_.store(0, std::memory_order_relaxed);
 }
 
 void Presenter::UpdateSurfacePaintConnectionFromUIThread(bool* repaint_needed_out,
@@ -1541,6 +1573,8 @@ void Presenter::UpdateSurfacePaintConnectionFromUIThread(bool* repaint_needed_ou
           surface_paint_connection_has_implicit_vsync_ = is_vsync_implicit;
           surface_width_in_paint_connection_ = surface_width;
           surface_height_in_paint_connection_ = surface_height;
+          paint_surface_width_.store(surface_width, std::memory_order_relaxed);
+          paint_surface_height_.store(surface_height, std::memory_order_relaxed);
           if (!is_reconnect) {
             *repaint_needed_out = true;
           }

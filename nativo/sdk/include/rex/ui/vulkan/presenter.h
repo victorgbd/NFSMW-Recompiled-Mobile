@@ -128,6 +128,9 @@ class VulkanPresenter final : public Presenter {
   static Surface::TypeFlags GetSurfaceTypesSupportedByInstance(
       const VulkanInstance::Extensions& instance_extensions);
   Surface::TypeFlags GetSupportedSurfaceTypes() const override;
+#if defined(REX_HAS_FIDELITYFX_SDK)
+  bool SupportsGsrEffect() const override { return true; }
+#endif
 
   bool CaptureGuestOutput(RawImage& image_out) override;
 
@@ -236,6 +239,7 @@ class VulkanPresenter final : public Presenter {
     kGuestOutputPaintPipelineLayoutIndexCasResample,
     kGuestOutputPaintPipelineLayoutIndexFsrEasu,
     kGuestOutputPaintPipelineLayoutIndexFsrRcas,
+    kGuestOutputPaintPipelineLayoutIndexSgsr1,
 #endif
 
     kGuestOutputPaintPipelineLayoutCount,
@@ -259,6 +263,8 @@ class VulkanPresenter final : public Presenter {
       case GuestOutputPaintEffect::kFsrRcas:
       case GuestOutputPaintEffect::kFsrRcasDither:
         return kGuestOutputPaintPipelineLayoutIndexFsrRcas;
+      case GuestOutputPaintEffect::kSgsr1:
+        return kGuestOutputPaintPipelineLayoutIndexSgsr1;
 #endif
       default:
         assert_unhandled_case(effect);

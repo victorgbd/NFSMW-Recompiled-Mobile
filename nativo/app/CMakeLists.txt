@@ -105,6 +105,9 @@ set(NFSMW_SOURCES
     # Native renderer, part C2: render targets, copies (resolve and
     # clear) and presentation of the game image.
     src/nfsmw_nativo_destinos.cpp
+    # Snapdragon GSR 2 (cvar nfsmw_gsr2): temporal upscaling to the screen's size with the camera's motion, a
+    # jittered projection and the HUD left out of the history.
+    src/nfsmw_gsr2.cpp
     # Native renderer, part C5a: identifies the shaders that reach the PM4 ring
     # in the NFSSPV library (nfsmw_shaders.nfsp next to the executable).
     src/nfsmw_nativo_shaders.cpp
@@ -137,6 +140,44 @@ if(ANDROID)
     set_target_properties(nfsmw PROPERTIES OUTPUT_NAME main)
     # The OpenGL ES backend (nfsmw_nativo_api = gles) calls GL and EGL from here too, not only the SDK.
     target_link_libraries(nfsmw PRIVATE EGL GLESv3)
+    # Lossless Scaling frame generation (nfsmw_lsfg, src/nfsmw_lsfg.cpp): lsfg-vk v1.0.0's framegen (MIT, patched
+    # to run on the renderer's device), DXVK's DXBC compiler (zlib), pe-parse (MIT) and volk (MIT). The shaders come
+    # from the user's Lossless.dll at run time. In app/thirdparty, shared by every edition's tree (hence ../app).
+    # Hidden visibility: volk's function pointers have the names of libvulkan's functions.
+    enable_language(C)
+    set(NFSMW_LSFG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../app/thirdparty")
+    file(GLOB NFSMW_LSFG_FUENTES
+        "${NFSMW_LSFG_DIR}/lsfg-vk/framegen/src/common/*.cpp"
+        "${NFSMW_LSFG_DIR}/lsfg-vk/framegen/src/core/*.cpp"
+        "${NFSMW_LSFG_DIR}/lsfg-vk/framegen/src/pool/*.cpp"
+        "${NFSMW_LSFG_DIR}/lsfg-vk/framegen/v3.1_src/*.cpp"
+        "${NFSMW_LSFG_DIR}/lsfg-vk/framegen/v3.1_src/shaders/*.cpp"
+        "${NFSMW_LSFG_DIR}/lsfg-vk/framegen/v3.1p_src/*.cpp"
+        "${NFSMW_LSFG_DIR}/lsfg-vk/framegen/v3.1p_src/shaders/*.cpp"
+        "${NFSMW_LSFG_DIR}/lsfg-vk/framegen/nfsmw/*.cpp"
+        "${NFSMW_LSFG_DIR}/lsfg-vk/extract/*.cpp"
+        "${NFSMW_LSFG_DIR}/dxbc/src/dxbc/*.cpp"
+        "${NFSMW_LSFG_DIR}/dxbc/src/spirv/*.cpp"
+        "${NFSMW_LSFG_DIR}/dxbc/src/util/*.cpp"
+        "${NFSMW_LSFG_DIR}/pe-parse/src/buffer.cpp"
+        "${NFSMW_LSFG_DIR}/pe-parse/src/parse.cpp"
+        "${NFSMW_LSFG_DIR}/pe-parse/src/unicode_codecvt.cpp"
+        "${NFSMW_LSFG_DIR}/volk/volk.c")
+    add_library(nfsmw_lsfg STATIC ${NFSMW_LSFG_FUENTES})
+    set_target_properties(nfsmw_lsfg PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+                          POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden)
+    target_include_directories(nfsmw_lsfg
+        PUBLIC "${NFSMW_LSFG_DIR}/lsfg-vk/framegen/public" "${NFSMW_LSFG_DIR}/lsfg-vk"
+               "${REXSDK_DIR}/thirdparty/vulkan-headers/include"
+        PRIVATE "${NFSMW_LSFG_DIR}/lsfg-vk/framegen/include" "${NFSMW_LSFG_DIR}/lsfg-vk/framegen/v3.1_include"
+                "${NFSMW_LSFG_DIR}/lsfg-vk/framegen/v3.1p_include" "${NFSMW_LSFG_DIR}/volk"
+                "${NFSMW_LSFG_DIR}/dxbc/include/dxbc" "${NFSMW_LSFG_DIR}/dxbc/include/spirv"
+                "${NFSMW_LSFG_DIR}/dxbc/include/util" "${NFSMW_LSFG_DIR}/dxbc/include/dxvk"
+                "${NFSMW_LSFG_DIR}/pe-parse/include")
+    target_compile_options(nfsmw_lsfg PRIVATE -fexceptions -frtti -w)
+    target_link_libraries(nfsmw PRIVATE nfsmw_lsfg)
+    target_sources(nfsmw PRIVATE src/nfsmw_lsfg.cpp)
+    target_compile_definitions(nfsmw PRIVATE NFSMW_LSFG=1)
     target_sources(nfsmw PRIVATE
         src/nfsmw_nativo_destinos_gles.cpp
         src/nfsmw_nativo_dibujos_gles.cpp

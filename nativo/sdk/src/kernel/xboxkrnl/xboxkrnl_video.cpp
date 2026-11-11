@@ -437,6 +437,11 @@ u32 VdRetrainEDRAM_entry(u32 unk0, u32 unk1, u32 unk2, u32 unk3, u32 unk4, u32 u
   return 0;
 }
 
+// PARCHE LOCAL (NFSMW Recompiled): if the app sets it, VdSwap calls it on the game thread and writes what it
+// returns as a fifth word of the PM4_XE_SWAP packet, so the ring thread knows which game frame each Swap is
+// (nfsmw_gsr2.cpp pairs the camera of each frame with its Swap). Both packet readers skip extra words.
+uint32_t (*g_nfsmw_secuencia_swap)() = nullptr;
+
 void VdSwap_entry(mapped_void buffer_ptr,      // ptr into primary ringbuffer
                   mapped_void fetch_ptr,       // frontbuffer Direct3D 9 texture header fetch
                   mapped_void unk2,            // system writeback ptr
@@ -507,12 +512,16 @@ void VdSwap_entry(mapped_void buffer_ptr,      // ptr into primary ringbuffer
   dwords[offset++] = gpu_fetch.dword_4;
   dwords[offset++] = gpu_fetch.dword_5;
 
-  dwords[offset++] = xenos::MakePacketType3(xenos::PM4_XE_SWAP, 4);
+  uint32_t (*const secuencia)() = g_nfsmw_secuencia_swap;
+  dwords[offset++] = xenos::MakePacketType3(xenos::PM4_XE_SWAP, secuencia ? 5 : 4);
   dwords[offset++] = rex::graphics::xenos::kSwapSignature;
   dwords[offset++] = frontbuffer_physical_address;
 
   dwords[offset++] = *width;
   dwords[offset++] = *height;
+  if (secuencia) {
+    dwords[offset++] = secuencia();
+  }
 
   // Fill the rest of the buffer with NOP packets.
   for (uint32_t i = offset; i < 64; i++) {

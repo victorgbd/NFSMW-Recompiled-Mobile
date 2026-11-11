@@ -404,6 +404,13 @@ bool GlesPresenter::PintarEfectos(const GuestOutputPaintFlow& flujo, const Guest
         glUniform2i(p.constantes[0], c.output_offset[0], c.output_offset[1]);
         glUniform1f(p.constantes[1], c.sharpness_post_setup);
       } break;
+      case GuestOutputPaintEffect::kSgsr1: {
+        GsrConstants c;
+        c.Initialize(flujo, i);
+        glUniform2i(p.constantes[0], c.output_offset[0], c.output_offset[1]);
+        glUniform2f(p.constantes[1], c.output_size_inv[0], c.output_size_inv[1]);
+        glUniform4f(p.constantes[2], c.input_size_inv[0], c.input_size_inv[1], c.input_size[0], c.input_size[1]);
+      } break;
 #endif
       default:
         break;

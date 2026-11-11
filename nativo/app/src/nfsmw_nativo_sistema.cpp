@@ -39,6 +39,7 @@ extern "C" void NfsmwAndroidPausaEnSwap() __attribute__((weak));
 #endif
 
 #include "nfsmw_esperas_tiron.h"
+#include "nfsmw_gsr2.h"
 #include "nfsmw_nativo_destinos.h"
 #include "nfsmw_nativo_ganchos.h"
 #include "nfsmw_nativo_shaders.h"
@@ -1989,6 +1990,8 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
           swap_ancho_.store(datos.Leer(), std::memory_order_relaxed);
           swap_alto_.store(datos.Leer(), std::memory_order_relaxed);
         }
+        // nfsmw_gsr2: the game frame of this Swap (fifth word, written by VdSwap when GSR 2 is on).
+        nfsmw::gsr2::SwapEnAnillo(palabras >= 5 ? datos.Leer() : 0);
         TrazaSwap();
 #if REX_PLATFORM_ANDROID || REX_PLATFORM_IOS
         // PARCHE LOCAL (NFSMW Recompiled): en segundo plano el anillo se para aqui, en el

@@ -263,6 +263,7 @@ namespace shaders {
 #include "../shaders/vulkan_spirv/guest_output_ffx_fsr_easu_ps.h"
 #include "../shaders/vulkan_spirv/guest_output_ffx_fsr_rcas_dither_ps.h"
 #include "../shaders/vulkan_spirv/guest_output_ffx_fsr_rcas_ps.h"
+#include "../shaders/vulkan_spirv/guest_output_sgsr1_ps.h"
 #endif
 #include "../shaders/vulkan_spirv/guest_output_triangle_strip_rect_vs.h"
 }  // namespace shaders
@@ -2586,6 +2587,7 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
             CasResampleConstants cas_resample;
             FsrEasuConstants fsr_easu;
             FsrRcasConstants fsr_rcas;
+            GsrConstants gsr;
 #endif
           } effect_constants;
           switch (guest_output_paint_pipeline_layout_index) {
@@ -2611,6 +2613,10 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
             case kGuestOutputPaintPipelineLayoutIndexFsrRcas: {
               effect_constants_size = sizeof(effect_constants.fsr_rcas);
               effect_constants.fsr_rcas.Initialize(guest_output_flow, i, guest_output_paint_config);
+            } break;
+            case kGuestOutputPaintPipelineLayoutIndexSgsr1: {
+              effect_constants_size = sizeof(effect_constants.gsr);
+              effect_constants.gsr.Initialize(guest_output_flow, i);
             } break;
 #endif
             default:
@@ -2956,6 +2962,9 @@ bool VulkanPresenter::InitializeSurfaceIndependent() {
       case kGuestOutputPaintPipelineLayoutIndexFsrRcas:
         guest_output_paint_push_constant_range_ffx.size = sizeof(FsrRcasConstants);
         break;
+      case kGuestOutputPaintPipelineLayoutIndexSgsr1:
+        guest_output_paint_push_constant_range_ffx.size = sizeof(GsrConstants);
+        break;
 #endif
       default:
         assert_unhandled_case(GuestOutputPaintPipelineLayoutIndex(i));
@@ -3028,6 +3037,10 @@ bool VulkanPresenter::InitializeSurfaceIndependent() {
       case GuestOutputPaintEffect::kFsrRcasDither:
         shader_module_create_info.codeSize = sizeof(shaders::guest_output_ffx_fsr_rcas_dither_ps);
         shader_module_create_info.pCode = shaders::guest_output_ffx_fsr_rcas_dither_ps;
+        break;
+      case GuestOutputPaintEffect::kSgsr1:
+        shader_module_create_info.codeSize = sizeof(shaders::guest_output_sgsr1_ps);
+        shader_module_create_info.pCode = shaders::guest_output_sgsr1_ps;
         break;
 #endif
       default:

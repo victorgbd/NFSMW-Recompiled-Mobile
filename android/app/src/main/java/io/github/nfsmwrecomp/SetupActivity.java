@@ -89,6 +89,7 @@ public class SetupActivity extends AppCompatActivity {
     // El acceso a todos los archivos (Android 11+, en sus ajustes) y el almacenamiento de antes (8-10).
     private static final int PEDIR_TODOS_ARCHIVOS = 6;
     private static final int PEDIR_ALMACENAMIENTO = 7;
+    private static final int PEDIR_LSFG = 8;
 
     private static final int ACENTO = 0xFF6F7432;
     // El acento sobre fondo oscuro, para iconos y textos: el de siempre se pierde.
@@ -867,8 +868,14 @@ public class SetupActivity extends AppCompatActivity {
             selectorSuavizado(),
             selector(R.string.escalado, R.string.escalado_resumen,
                     Arrays.asList(getString(R.string.escalado_bilineal), getString(R.string.escalado_fsr),
-                            getString(R.string.escalado_cas)),
-                    Arrays.asList("bilinear", "fsr", "cas"), ajustes.escalado(), false, ajustes::escalado),
+                            getString(R.string.escalado_cas), getString(R.string.escalado_gsr),
+                            getString(R.string.escalado_gsr2)),
+                    Arrays.asList("bilinear", "fsr", "cas", "gsr", "gsr2"), ajustes.escalado(), false, ajustes::escalado),
+            soloNativo(selector(R.string.lsfg, R.string.lsfg_resumen,
+                    Arrays.asList(getString(R.string.lsfg_no), getString(R.string.lsfg_x, 2),
+                            getString(R.string.lsfg_x, 3), getString(R.string.lsfg_x, 4)),
+                    Arrays.asList(0, 2, 3, 4), ajustes.lsfg(), true, ajustes::lsfg)),
+            soloNativo(filaDllLsfg()),
             soloXenos(interruptor(R.string.posprocesado, R.string.posprocesado_resumen, !ajustes.sinPosprocesado(), v -> ajustes.sinPosprocesado(!v))),
             selector(R.string.anisotropico, R.string.anisotropico_resumen,
                     Arrays.asList(getString(R.string.aniso_no), getString(R.string.aniso_2), getString(R.string.aniso_4), getString(R.string.aniso_16)),
@@ -918,6 +925,100 @@ public class SetupActivity extends AppCompatActivity {
     }
 
     /** Preajustes del motor nativo: cambian de golpe los ajustes graficos de abajo. */
+    /**
+     * El Lossless.dll de Lossless Scaling para la generacion de fotogramas: lo
+     * elige el usuario (su copia comprada) y se copia a files/lsfg. No se
+     * incluye ni se descarga.
+     */
+    private View filaDllLsfg() {
+        LinearLayout caja = new LinearLayout(this);
+        caja.setOrientation(LinearLayout.VERTICAL);
+        caja.setPadding(0, 0, 0, dp(12));
+        caja.addView(titulo(R.string.lsfg_dll));
+        java.io.File dll = Ajustes.dllLsfg(this);
+        TextView estado = resumen(dll.isFile() ? R.string.lsfg_dll_presente : R.string.lsfg_dll_falta);
+        caja.addView(estado);
+        LinearLayout fila = new LinearLayout(this);
+        fila.setOrientation(LinearLayout.HORIZONTAL);
+        fila.setPadding(0, dp(6), 0, 0);
+        MaterialButton elegir = new MaterialButton(this);
+        elegir.setText(R.string.lsfg_dll_elegir);
+        estilarBotonSecundario(elegir);
+        elegir.setOnClickListener(v -> {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("*/*");
+            startActivityForResult(i, PEDIR_LSFG);
+        });
+        MaterialButton quitar = new MaterialButton(this);
+        quitar.setText(R.string.lsfg_dll_quitar);
+        estilarBotonPeligro(quitar);
+        quitar.setEnabled(dll.isFile());
+        quitar.setOnClickListener(v -> {
+            if (Ajustes.dllLsfg(this).delete()) {
+                refrescar();
+            }
+        });
+        LinearLayout.LayoutParams izquierda =
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        izquierda.setMarginEnd(dp(8));
+        fila.addView(elegir, izquierda);
+        fila.addView(quitar, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        caja.addView(fila);
+        return caja;
+    }
+
+    /**
+     * Copia el Lossless.dll elegido a files/lsfg, en su hilo. Solo comprueba que
+     * es un ejecutable de Windows (empieza por MZ); los shaders los busca el
+     * juego al arrancar y, si faltan, lo dice en su log y juega sin generacion.
+     */
+    private void copiarDllLsfg(Uri uri) {
+        final Context app = getApplicationContext();
+        archivos.execute(() -> {
+            java.io.File destino = Ajustes.dllLsfg(app);
+            java.io.File temporal = new java.io.File(destino.getParentFile(), "Lossless.dll.tmp");
+            int texto;
+            try {
+                destino.getParentFile().mkdirs();
+                try (java.io.InputStream in = app.getContentResolver().openInputStream(uri);
+                     java.io.OutputStream out = new java.io.FileOutputStream(temporal)) {
+                    if (in == null) {
+                        throw new IOException("sin datos");
+                    }
+                    byte[] bufer = new byte[1 << 16];
+                    long total = 0;
+                    boolean cabecera = false;
+                    for (int n; (n = in.read(bufer)) > 0; ) {
+                        if (total == 0 && n >= 2) {
+                            cabecera = bufer[0] == 'M' && bufer[1] == 'Z';
+                        }
+                        out.write(bufer, 0, n);
+                        total += n;
+                    }
+                    if (!cabecera) {
+                        throw new IllegalArgumentException();
+                    }
+                }
+                if (!temporal.renameTo(destino)) {
+                    throw new IOException("no se pudo guardar");
+                }
+                texto = R.string.lsfg_dll_copiado;
+            } catch (IllegalArgumentException e) {
+                temporal.delete();
+                texto = R.string.lsfg_dll_no_valido;
+            } catch (IOException | SecurityException e) {
+                temporal.delete();
+                texto = R.string.lsfg_dll_error;
+            }
+            final int mensaje = texto;
+            runOnUiThread(() -> {
+                Toast.makeText(this, mensaje, Toast.LENGTH_LONG).show();
+                refrescar();
+            });
+        });
+    }
+
     private View filaPreajustes() {
         LinearLayout caja = new LinearLayout(this);
         caja.setOrientation(LinearLayout.VERTICAL);
@@ -2386,6 +2487,10 @@ public class SetupActivity extends AppCompatActivity {
         }
         if (peticion == PEDIR_IMPORTAR) {
             confirmarImportar(app -> Partidas.importar(app, uri));
+            return;
+        }
+        if (peticion == PEDIR_LSFG) {
+            copiarDllLsfg(uri);
             return;
         }
         if (peticion == PEDIR_ISO) {

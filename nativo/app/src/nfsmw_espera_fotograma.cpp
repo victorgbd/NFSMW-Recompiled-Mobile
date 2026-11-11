@@ -33,6 +33,7 @@
 //   1 ms of delay on every delivery.
 
 #include "nfsmw_esperas_tiron.h"
+#include "nfsmw_gsr2.h"
 
 #include <rex/cvar.h>
 #include <rex/hook.h>
@@ -469,7 +470,9 @@ REX_HOOK_RAW(sub_82445660) {
   if (fin_anterior_ns != 0) {
     nfsmw::esperas::Sumar(nfsmw::esperas::kPreparadorFuera, uint64_t(inicio_ns - fin_anterior_ns));
   }
+  nfsmw::gsr2::EmpezarLlenado();  // nfsmw_gsr2: one camera and one jitter phase per filled frame
   __imp__sub_82445660(ctx, base);
+  nfsmw::gsr2::TerminarLlenado();
   fin_anterior_ns = AhoraNs();
   nfsmw::esperas::Sumar(nfsmw::esperas::kPreparadorLista, uint64_t(fin_anterior_ns - inicio_ns));
 }

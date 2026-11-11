@@ -686,6 +686,8 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
       XE_UI_VULKAN_FEATURE_2(features_1_2, descriptorBindingPartiallyBound);
       XE_UI_VULKAN_FEATURE_2(features_1_2, descriptorBindingSampledImageUpdateAfterBind);
       XE_UI_VULKAN_FEATURE_2(features_1_2, descriptorBindingUpdateUnusedWhilePending);
+      // PARCHE LOCAL (NFSMW Recompiled): Lossless Scaling frame generation (see device.h).
+      XE_UI_VULKAN_FEATURE_2(features_1_2, vulkanMemoryModel);
     }
   } else {
     if (ext_1_2_KHR_sampler_mirror_clamp_to_edge) {
@@ -708,6 +710,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     // Fragments and vertices shaded per pass (pipeline statistics for the native
     // renderer). Without the feature the query pool cannot be created.
     XE_UI_VULKAN_FEATURE(pipelineStatisticsQuery)
+    // PARCHE LOCAL (NFSMW Recompiled): Lossless Scaling frame generation (see device.h).
+    XE_UI_VULKAN_FEATURE(shaderStorageImageReadWithoutFormat)
+    XE_UI_VULKAN_FEATURE(shaderStorageImageWriteWithoutFormat)
     if (!with_gpu_emulation) {
       XE_UI_VULKAN_FEATURE(independentBlend)
       XE_UI_VULKAN_FEATURE(samplerAnisotropy)
@@ -719,6 +724,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     if (with_gpu_emulation) {
       XE_UI_VULKAN_FEATURE_2(features_1_3, shaderDemoteToHelperInvocation);
       XE_UI_VULKAN_FEATURE_2(features_1_3, dynamicRendering);
+    }
+    if (REXCVAR_GET(vulkan_native_shader_features)) {
+      // PARCHE LOCAL (NFSMW Recompiled): Lossless Scaling frame generation (see device.h).
+      XE_UI_VULKAN_FEATURE_2(features_1_3, synchronization2);
     }
   } else {
     if (ext_1_3_KHR_dynamic_rendering) {
@@ -784,7 +793,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   }
 
   if (device->extensions_.ext_EXT_robustness2) {
-    if (with_gpu_emulation) {
+    // PARCHE LOCAL (NFSMW Recompiled): also for the native renderer (Lossless Scaling frame generation binds
+    // null descriptors).
+    if (with_gpu_emulation || REXCVAR_GET(vulkan_native_shader_features)) {
       XE_UI_VULKAN_FEATURE_2(features_EXT_robustness2, nullDescriptor)
     }
   }

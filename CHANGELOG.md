@@ -10,6 +10,44 @@ proyecto vibe-codeado: ver la sección "This fork" del [README](README.md).
 
 ### Añadido
 
+- **Generación de fotogramas de Lossless Scaling** (0.5.7, motor nativo, Android, solo Vulkan 1.3;
+  experimental):
+  opción «Generación de fotogramas» del lanzador (No, x2, x3, x4) y botón para elegir el
+  `Lossless.dll` del usuario, que se copia a `files/lsfg` (no se incluye ni se descarga: Lossless
+  Scaling es de pago). Usa el framegen de lsfg-vk v1.0.0 (MIT; las versiones posteriores son GPL-3 y,
+  desde agosto de 2026, una licencia más restrictiva) con los shaders del DLL leídos con pe-parse y
+  traducidos de DXBC a SPIR-V con el compilador de DXVK (zlib), todo en `nativo/app/thirdparty`.
+  framegen se ha adaptado para correr sobre el dispositivo Vulkan del renderizador (el original creaba
+  el suyo y compartía imágenes por descriptores de fichero, que en Android acabaría en otro driver que
+  Turnip). Cada Swap: la pasada de salida dibuja el fotograma en una imagen propia, se copia a la
+  entrada de LSFG, se generan los intermedios y un hilo de ritmo los presenta repartidos en el
+  intervalo medido entre Swaps, con el real al final (un fotograma más de retraso). El SDK activa
+  `synchronization2`, `vulkanMemoryModel`, `nullDescriptor` y la escritura de imágenes sin formato
+  cuando el dispositivo las tiene. Código en `nativo/app/src/nfsmw_lsfg.cpp`. Compila; sin probar en
+  el móvil.
+- **Escalado Snapdragon GSR 2** (0.5.7, motor nativo, solo Vulkan; experimental): quinta opción de «Escalado a
+  la pantalla» (`--nfsmw_gsr2=true`, el presentador se queda en bilineal). El escalador temporal de
+  Qualcomm (BSD-3, variante de 2 pasadas de fragmentos, la recomendada para móviles) reconstruye el
+  fotograma al tamaño de la pantalla con el fotograma anterior. El juego no dibuja vectores de
+  movimiento: salen de la profundidad de la escena y de la vista×proyección de la vista 1 de este
+  fotograma y del anterior (`clipToPrevClip`), o sea, solo el movimiento de la cámara; los coches y el
+  tráfico pueden dejar algo de estela. La cámara se desplaza una fracción de píxel por fotograma
+  (Halton 2,3; `nfsmw_gsr2_jitter`) solo mientras GSR 2 está escalando. El HUD queda fuera del
+  historial: el juego copia la escena compuesta justo antes del HUD (`sub_82442478`) y donde el
+  fotograma final difiere de esa copia no se usa historial ni desplazamiento
+  (`nfsmw_gsr2_mascara_hud`, `nfsmw_gsr2_umbral_hud`). Cada cámara se empareja con su Swap por un
+  número que VdSwap escribe como quinta palabra del paquete PM4_XE_SWAP (parche del SDK). Código en
+  `nativo/app/src/nfsmw_gsr2.cpp` y `shaders/nfsmw_sgsr2_*.frag`. Compila; sin probar en el móvil.
+  Las otras ediciones necesitan `crear_arbol.py` otra vez.
+- **Escalado Snapdragon GSR 1** (0.5.7, motor nativo, Vulkan y GLES): cuarta opción de «Escalado a la
+  pantalla» en el lanzador de Android e iOS (`--present_effect=gsr`). Es el escalador espacial de
+  Qualcomm (BSD-3, `sdk/src/ui/shaders/fuentes/guest_output_sgsr1_ps.frag`, variante con dirección
+  de bordes): una sola pasada de la imagen del juego al tamaño de la pantalla, frente a las dos o
+  más de FSR 1 (EASU encadenado + RCAS), con media precisión. Sin escalar (juego a la resolución
+  de la pantalla) no hace nada, como el bilineal. El de compatibilidad (Xenos) y D3D12 no lo
+  tienen: usan FSR 1. El SPIR-V lo genera `nativo/tools/compilar_shader_presentador.py` con el
+  glslc del NDK y la versión GLES el conversor de siempre. Textos en los 10 idiomas. Compila;
+  sin ver en el móvil todavía.
 - **Botón «Salir» en el menú principal** (0.5.6, motor nativo): el 360 no tiene cómo salir del
   juego. En el menú principal (`MainMenu.fng`, sin diálogos ni submenús encima) sale una
   indicación más, «◄ Salir», con el estilo de las del juego (barra oscura rayada, círculo con la

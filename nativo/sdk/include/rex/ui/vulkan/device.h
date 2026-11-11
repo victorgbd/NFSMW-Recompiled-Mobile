@@ -125,6 +125,13 @@ class VulkanDevice {
     bool descriptorBindingPartiallyBound = false;
     bool descriptorBindingSampledImageUpdateAfterBind = false;
     bool descriptorBindingUpdateUnusedWhilePending = false;
+    // PARCHE LOCAL (NFSMW Recompiled): for the frame generation of Lossless Scaling (nfsmw_lsfg.cpp), whose
+    // shaders (translated from DXBC by DXVK's compiler) declare the Vulkan memory model and write storage images
+    // without a format, and whose code uses vkCmdPipelineBarrier2 and null descriptors.
+    bool shaderStorageImageReadWithoutFormat = false;
+    bool shaderStorageImageWriteWithoutFormat = false;
+    bool vulkanMemoryModel = false;
+    bool synchronization2 = false;
 
     // VK_KHR_sampler_mirror_clamp_to_edge (#15, promoted to 1.2)
 
